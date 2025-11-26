@@ -6,12 +6,18 @@ import dataclasses
 import difflib
 import logging
 import pathlib
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias, List, runtime_checkable
+import copy
+import numpy as np
 
+import torch
 import etils.epath as epath
 import flax.nnx as nnx
 from typing_extensions import override
 import tyro
+
+import torch.nn.functional as F
+import kornia.geometry.conversions as K
 
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
@@ -20,6 +26,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.zj_humanoid_policy as zjhumanoid_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -27,10 +34,13 @@ import openpi.training.misc.roboarena_config as roboarena_config
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
 import openpi.transforms as _transforms
+from openpi.shared import array_typing as at
 
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
 Filter: TypeAlias = nnx.filterlib.Filter
+
+DataDict: TypeAlias = at.PyTree
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,6 +105,8 @@ class DataConfig:
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
     # Path to the data filter file for DROID dataset
     filter_dict_path: str | None = None
+
+    force_offline_dataset: bool = False
 
 
 class GroupFactory(Protocol):
@@ -453,6 +465,496 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
         )
 
 
+class SplitStateTransform:
+    def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False):
+        self.use_arms = use_arms
+        self.use_tcp_pose = use_tcp_pose
+
+    def __call__(self, data):
+        state = data["observation.state"]
+        if self.use_arms[0]:
+            if self.use_tcp_pose:
+                data["observation/end_effector/left_tcp"] = state[38:45]
+            else:
+                data["observation/left_arm_joint_position"] = state[7:14]
+            data["observation/left_hand_joint_position"] = state[52:58]
+        if self.use_arms[1]:
+            if self.use_tcp_pose:
+                data["observation/end_effector/right_tcp"] = state[45:52]
+            else:
+                data["observation/right_arm_joint_position"] = state[0:7]
+            data["observation/right_hand_joint_position"] = state[58:64]
+        if not self.use_arms[0] and not self.use_arms[1]:
+            raise ValueError("At least one arm must be used.")
+        return data
+
+class PackActionTransform:
+    def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False):
+        self.use_arms = use_arms
+        self.use_tcp_pose = use_tcp_pose
+
+    def __call__(self, data):
+        arm_target_slice = [slice(38, 45), slice(45, 52)] if self.use_tcp_pose else \
+            [slice(7, 14), slice(0, 7)]
+        if self.use_arms[0] and not self.use_arms[1]:
+            # Left arm joints + left hand joints
+            left_arm_joints = data["actions"][:, arm_target_slice[0]]
+            left_hand_joints = data["teleoperate_action_states"][0:6]
+            left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+            data["actions"] = torch.cat([left_arm_joints, left_hand_joints], dim=1)
+        elif not self.use_arms[0] and self.use_arms[1]:
+            # Right arm joints + right hand joints
+            right_arm_joints = data["actions"][:, arm_target_slice[1]]
+            right_hand_joints = data["teleoperate_action_states"][6:12]
+            right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+            data["actions"] = torch.cat([right_arm_joints, right_hand_joints], dim=1)
+        elif self.use_arms[0] and self.use_arms[1]:
+            # Left arm joints + left hand joints + right arm joints + right hand joints
+            left_arm_joints = data["actions"][:, arm_target_slice[0]]
+            left_hand_joints = data["teleoperate_action_states"][0:6]
+            left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+
+            right_arm_joints = data["actions"][:, arm_target_slice[1]]
+            right_hand_joints = data["teleoperate_action_states"][6:12]
+            right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+
+            data["actions"] = torch.cat([left_arm_joints, left_hand_joints, right_arm_joints, right_hand_joints], dim=1)
+        elif not self.use_arms[0] and not self.use_arms[1]:
+            raise ValueError("At least one arm must be used.")
+        return data
+
+
+@runtime_checkable
+class DataTransformFn(Protocol):
+    def __call__(self, data: DataDict) -> DataDict:
+        """Apply transformation to the data.
+
+        Args:
+            data: The data to apply the transform to. This is a possibly nested dictionary that contains
+                unbatched data elements. Each leaf is expected to be a numpy array. Using JAX arrays is allowed
+                but not recommended since it may result in extra GPU memory usage inside data loader worker
+                processes.
+
+        Returns:
+            The transformed data. Could be the input `data` that was modified in place, or a new data structure.
+        """
+
+def quat_xyzw_to_wxyz(quat: torch.Tensor) -> torch.Tensor:
+    """
+    Convert quaternion from xyzw convention to wxyz convention.
+
+    Args:
+        quat: (..., 4) tensor in xyzw format
+
+    Returns:
+        (..., 4) tensor in wxyz format
+    """
+    return torch.cat([quat[..., 3:], quat[..., :3]], dim=-1)
+
+
+def quat_wxyz_to_xyzw(quat: torch.Tensor) -> torch.Tensor:
+    """
+    Convert quaternion from wxyz convention to xyzw convention.
+
+    Args:
+        quat: (..., 4) tensor in wxyz format
+
+    Returns:
+        (..., 4) tensor in xyzw format
+    """
+    return torch.cat([quat[..., 1:], quat[..., :1]], dim=-1)
+
+
+@dataclasses.dataclass(frozen=True)
+class DeltaPoseAction(DataTransformFn):
+    """Convert absolute 7D (pos + quat) action to 6D delta (pos + rotvec)
+    only when mask has contiguous 7 True values (pos+quat)."""
+
+    action_mask: Sequence[bool] | None
+    state_mask: Sequence[bool] | None
+    base_world: bool = False
+
+    def __call__(self, data: DataDict) -> DataDict:
+        # if "actions" not in data or "state" not in data:
+        #     return data
+        # state, actions = np.asarray(data["state"]), np.asarray(data["actions"])
+
+        # if self.action_mask is None or len(self.action_mask) != actions.shape[-1]:
+        #     return data
+        # action_mask = np.asarray(self.action_mask, dtype=bool)
+        # action_indices = np.where(action_mask)[0]
+        # if len(action_indices) != 7 or (action_indices[-1] - action_indices[0]) != 6:
+        #     return data
+        # action_pos_idx, action_quat_idx = action_indices[..., :3], action_indices[..., 3:7]
+
+        # if self.state_mask is not None and len(self.state_mask) != state.shape[-1]:
+        #     return data
+        # state_mask = np.asarray(self.state_mask, dtype=bool)
+        # state_indices = np.where(state_mask)[0]
+        # if len(state_indices) != 7 or (state_indices[-1] - state_indices[0]) != 6:
+        #     return data
+        # state_pos_idx, state_quat_idx = state_indices[..., :3], state_indices[..., 3:7]
+
+        # delta_pos = actions[..., action_pos_idx] - state[..., state_pos_idx] if self.base_world else ...
+        # state_ori = Rotation.from_quat(state[..., state_quat_idx])
+        # action_ori = Rotation.from_quat(actions[..., action_quat_idx])
+        # delta_rotvec = (action_ori * state_ori.inv()).as_rotvec() if self.base_world else (state_ori.inv() * action_ori).as_rotvec()
+        # delta_pose = np.concatenate([delta_pos, delta_rotvec], axis=-1)
+
+        # data["actions"] = np.concatenate([actions[..., :action_indices[0]], delta_pose, actions[..., action_indices[-1] + 1:]],
+        #                                  axis=-1)
+        # return data
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        actions = torch.as_tensor(data["actions"], device=device, dtype=torch.float32)
+        state = torch.as_tensor(data["state"], device=device, dtype=torch.float32)
+
+        if self.action_mask is None or len(self.action_mask) != actions.shape[-1]:
+            return data
+        action_mask = torch.tensor(self.action_mask, device=device, dtype=torch.bool)
+        action_indices = torch.where(action_mask)[0]
+        if len(action_indices) != 7 or (action_indices[-1] - action_indices[0]) != 6:
+            return data
+        action_pos_idx, action_quat_idx = action_indices[:3], action_indices[3:7]
+
+        if self.state_mask is not None and len(self.state_mask) != state.shape[-1]:
+            return data
+        state_mask = torch.tensor(self.state_mask, device=device, dtype=torch.bool)
+        state_indices = torch.where(state_mask)[0]
+        if len(state_indices) != 7 or (state_indices[-1] - state_indices[0]) != 6:
+            return data
+        state_pos_idx, state_quat_idx = state_indices[:3], state_indices[3:7]
+
+        state_quat = state[..., state_quat_idx]
+        action_quat = actions[..., action_quat_idx]
+        R_state = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(state_quat))
+        R_action = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(action_quat))
+
+        delta_pos = actions[..., action_pos_idx] - state[..., state_pos_idx] if self.base_world else \
+            torch.squeeze(R_state.transpose(-1, -2) @ (actions[..., action_pos_idx] - state[..., state_pos_idx]).unsqueeze(-1))
+        R_delta = torch.matmul(R_action, R_state.transpose(-2, -1)) if self.base_world else \
+            torch.matmul(R_state.transpose(-2, -1), R_action)
+        delta_rotvec = K.rotation_matrix_to_axis_angle(R_delta)
+        delta_pose = torch.cat([delta_pos, delta_rotvec], dim=-1)
+
+        actions_new = torch.cat([
+            actions[..., :action_indices[0]],
+            delta_pose,
+            actions[..., action_indices[-1] + 1:]
+        ], dim=-1)
+        data["actions"] = actions_new.cpu().numpy()
+        return data
+
+
+
+@dataclasses.dataclass(frozen=True)
+class AbsolutePoseAction(DataTransformFn):
+    """Convert delta 6D (delta pos + delta rotvec) back to absolute 7D (pos + quat)
+    only when mask has contiguous 7 True values (pos+quat) in the state_mask.
+    """
+
+    action_mask: Sequence[bool] | None
+    state_mask: Sequence[bool] | None
+    base_world: bool = False
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "actions" not in data or "state" not in data:
+            return data
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        actions = torch.as_tensor(data["actions"], device=device, dtype=torch.float32)
+        state = torch.as_tensor(data["state"], device=device, dtype=torch.float32)
+
+        if self.state_mask is None or len(self.state_mask) != state.shape[-1]:
+            return data
+        state_mask = torch.tensor(self.state_mask, device=device, dtype=torch.bool)
+        state_indices = torch.where(state_mask)[0]
+        if len(state_indices) != 7 or (state_indices[-1] - state_indices[0]) != 6:
+            return data
+        state_pos_idx, state_quat_idx = state_indices[:3], state_indices[3:7]
+
+        if self.action_mask is None or len(self.action_mask) != actions.shape[-1]:
+            return data
+        action_mask = torch.tensor(self.action_mask, device=device, dtype=torch.bool)
+        action_indices = torch.where(action_mask)[0]
+        if len(action_indices) != 6 or (action_indices[-1] - action_indices[0]) != 5:
+            return data
+        action_pos_idx, action_rotvec_idx = action_indices[:3], action_indices[3:6]
+
+        state_quat = state[..., state_quat_idx]  # (...,4)
+        R_state = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(state_quat))
+        delta_rotvec = actions[..., action_rotvec_idx]  # (...,3)
+        R_delta = K.axis_angle_to_rotation_matrix(delta_rotvec)
+
+        pos_abs = state[..., state_pos_idx] + actions[..., action_pos_idx] if self.base_world else \
+            torch.squeeze(R_state @ actions[..., action_pos_idx].unsqueeze(-1)) + state[..., state_pos_idx]
+
+        R_abs = torch.matmul(R_delta, R_state) if self.base_world else torch.matmul(R_state, R_delta)
+        quat_abs = quat_wxyz_to_xyzw(K.rotation_matrix_to_quaternion(R_abs))  # (...,4)
+
+        abs_pose = torch.cat([pos_abs, quat_abs], dim=-1)
+        actions_new = torch.cat([
+            actions[..., :action_indices[0]],
+            abs_pose,
+            actions[..., action_indices[-1] + 1:]
+        ], dim=-1)
+
+        data["actions"] = actions_new.cpu().numpy()
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
+class PoseActionTransformFrame(DataTransformFn):
+    """Transform pose-based actions (pos + quat or rotvec) to another frame.
+
+    If the action_mask selects a contiguous 6D (pos + rotvec) or 7D (pos + quat),
+    apply the provided transform_matrix (4×4) to transform them into another frame.
+    """
+
+    action_mask: Sequence[bool] | None
+    translation_fixed: bool = True
+    transform_matrix: np.ndarray = dataclasses.field(default_factory=lambda: np.eye(4))
+
+    def __call__(self, data: DataDict) -> DataDict:
+        # if "actions" not in data:
+        #     return data
+        # actions = np.asarray(data["actions"])
+
+        # if self.action_mask is None or len(self.action_mask) != actions.shape[-1]:
+        #     return data
+        # action_mask = np.asarray(self.action_mask, dtype=bool)
+        # action_indices = np.where(action_mask)[0]
+        # if len(action_indices) == 7 and (action_indices[-1] - action_indices[0]) == 6:
+        #     action_pos_idx, action_ori_idx = action_indices[..., :3], action_indices[..., 3:7]
+        #     use_quat = True
+        # elif len(action_indices) == 6 and (action_indices[-1] - action_indices[0]) == 5:
+        #     action_pos_idx, action_ori_idx = action_indices[..., :3], action_indices[..., 3:6]
+        #     use_quat = False
+        # else:
+        #     return data
+        # positions = actions[..., action_pos_idx]
+        # orientations = actions[..., action_ori_idx]
+
+        # R_T = self.transform_matrix[:3, :3]
+        # t_T = self.transform_matrix[:3, 3]
+
+        # if self.translation_fixed:
+        #     # Using R_T.T because positions are row vectors in shape (..., 3).
+        #     positions_transformed = positions @ R_T.T
+        # else:
+        #     positions_transformed = positions @ R_T.T + t_T
+        # if use_quat:
+        #     # Convert to Rotation
+        #     rot_transformed = Rotation.from_matrix(R_T) * Rotation.from_quat(orientations)  # left-multiply transform
+        #     orientations_transformed = rot_transformed.as_quat()
+        # else:
+        #     rot_transformed = Rotation.from_matrix(R_T) * Rotation.from_rotvec(orientations)
+        #     orientations_transformed = rot_transformed.as_rotvec()
+
+        # transformed = np.concatenate([positions_transformed, orientations_transformed], axis=-1)
+        # new_actions = np.copy(actions)
+        # new_actions[..., action_indices[0]:action_indices[-1]+1] = transformed
+        # data["actions"] = new_actions
+        # return data
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        actions = torch.as_tensor(data["actions"], device=device, dtype=torch.float32)
+        T = torch.as_tensor(self.transform_matrix, dtype=torch.float32, device=device)
+
+        if self.action_mask is None or len(self.action_mask) != actions.shape[-1]:
+            return data
+        action_mask = torch.tensor(self.action_mask, device=device, dtype=torch.bool)
+        action_indices = torch.where(action_mask)[0]
+
+        if len(action_indices) == 7 and (action_indices[-1] - action_indices[0]) == 6:
+            action_pos_idx, action_ori_idx = action_indices[:3], action_indices[3:7]
+            use_quat = True
+        elif len(action_indices) == 6 and (action_indices[-1] - action_indices[0]) == 5:
+            action_pos_idx, action_ori_idx = action_indices[:3], action_indices[3:6]
+            use_quat = False
+        else:
+            return data
+
+        positions = actions[..., action_pos_idx]  # (..., 3)
+        orientations = actions[..., action_ori_idx]  # (..., 3 or 4)
+
+        R_T = T[:3, :3]  # (3,3)
+        t_T = T[:3, 3]   # (3,)
+
+        if self.translation_fixed:
+            positions_transformed = positions @ R_T.T  # row vectors
+        else:
+            positions_transformed = positions @ R_T.T + t_T
+
+        if use_quat:
+            # quaternion: (...,4)
+            R_ori = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(orientations))  # (...,3,3)
+            R_transformed = R_T @ R_ori  # left-multiply transform
+            orientations_transformed = quat_wxyz_to_xyzw(K.rotation_matrix_to_quaternion(R_transformed))
+        else:
+            # rotvec: (...,3)
+            R_ori = K.axis_angle_to_rotation_matrix(orientations)  # (...,3,3)
+            R_transformed = R_T @ R_ori
+            orientations_transformed = K.rotation_matrix_to_axis_angle(R_transformed)
+
+        transformed = torch.cat([positions_transformed, orientations_transformed], dim=-1)
+        actions_new = torch.cat([
+            actions[..., :action_indices[0]],
+            transformed,
+            actions[..., action_indices[-1] + 1:]
+        ], dim=-1)
+        data["actions"] = actions_new.cpu().numpy()
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotZJHumanoidDataConfig(DataConfigFactory):
+    """
+    This config is used to configure transforms that are applied at various parts of the data pipeline.
+    For your own dataset, you can copy this class and modify the transforms to match your dataset based on the
+    comments below.
+    """
+
+    extra_delta_transform: bool = False
+    force_offline_dataset: bool = True
+
+    use_arms: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
+    use_wrist_cameras: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
+
+    use_tcp_pose: bool = False
+    tcp_pose_in_wrist: bool = True
+
+    flip_wrist_images: bool = False
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # The repack transform is *only* applied to the data coming from the dataset,
+        # and *not* during inference. We can use it to make inputs from the dataset look
+        # as close as possible to those coming from the inference environment (e.g. match the keys).
+        # Below, we match the keys in the dataset (which we defined in the data conversion script) to
+        # the keys we use in our inference pipeline (defined in the inference script for libero).
+        # For your own dataset, first figure out what keys your environment passes to the policy server
+        # and then modify the mappings below so your dataset's keys get matched to those target keys.
+        # The repack transform simply remaps key names here.
+        mapping = {
+            "observation/images/chest_rgb": "observation.images.chest_rgb",
+            "actions": "actions",
+            "prompt": "prompt",
+        }
+        if self.use_wrist_cameras[0]:
+            mapping["observation/images/left_wrist_rgb"] = "observation.images.left_wrist_rgb"
+        if self.use_wrist_cameras[1]:
+            mapping["observation/images/right_wrist_rgb"] = "observation.images.right_wrist_rgb"
+        if self.use_arms[0]:
+            if self.use_tcp_pose:
+                mapping["observation/end_effector/left_tcp"] = "observation/end_effector/left_tcp"
+            else:
+                mapping["observation/left_arm_joint_position"] = "observation/left_arm_joint_position"
+            mapping["observation/left_hand_joint_position"] = "observation/left_hand_joint_position"
+        if self.use_arms[1]:
+            if self.use_tcp_pose:
+                mapping["observation/end_effector/right_tcp"] = "observation/end_effector/right_tcp"
+            else:
+                mapping["observation/right_arm_joint_position"] = "observation/right_arm_joint_position"
+            mapping["observation/right_hand_joint_position"] = "observation/right_hand_joint_position"
+
+        repack_transform = _transforms.Group(
+            inputs=[
+                SplitStateTransform(self.use_arms, self.use_tcp_pose),
+                PackActionTransform(self.use_arms, self.use_tcp_pose),
+                _transforms.RepackTransform(mapping),
+            ]
+        )
+
+        # The data transforms are applied to the data coming from the dataset *and* during inference.
+        # Below, we define the transforms for data going into the model (``inputs``) and the transforms
+        # for data coming out of the model (``outputs``) (the latter is only used during inference).
+        # We defined these transforms in `libero_policy.py`. You can check the detailed comments there for
+        # how to modify the transforms to match your dataset. Once you created your own transforms, you can
+        # replace the transforms below with your own.
+        data_transforms = _transforms.Group(
+            inputs=[zjhumanoid_policy.ZJHumanoidInputs(model_type=model_config.model_type,
+                                                       use_arms=self.use_arms, use_wrist_cameras=self.use_wrist_cameras,
+                                                       use_tcp_pose=self.use_tcp_pose,
+                                                       flip_wrist_images=self.flip_wrist_images)],
+            outputs=[zjhumanoid_policy.ZJHumnanoidOutputs(use_arms=self.use_arms)],
+        )
+
+        # One additional data transform: pi0 models are trained on delta actions (relative to the first
+        # state in each action chunk). IF your data has ``absolute`` actions (e.g. target joint angles)
+        # you can uncomment the following line to convert the actions to delta actions. The only exception
+        # is for the gripper actions which are always absolute.
+        # In the example below, we would apply the delta conversion to the first 6 actions (joints) and
+        # leave the 7th action (gripper) unchanged, i.e. absolute.
+        # In Libero, the raw actions in the dataset are already delta actions, so we *do not* need to
+        # apply a separate delta conversion (that's why it's commented out). Choose whether to apply this
+        # transform based on whether your dataset uses ``absolute`` or ``delta`` actions out of the box.
+
+        # LIBERO already represents actions as deltas, but we have some old Pi0 checkpoints that are trained with this
+        # extra delta transform.
+        if self.extra_delta_transform:
+            if self.use_arms[0] and self.use_arms[1]:
+                input_delta_action_mask = [_transforms.make_bool_mask(7, -6, 7, -6)] if not self.use_tcp_pose else \
+                    [_transforms.make_bool_mask(7, -6, -7, -6), _transforms.make_bool_mask(-7, -6, 7, -6)]
+            elif (self.use_arms[0] and not self.use_arms[1]) or (self.use_arms[1] and not self.use_arms[0]):
+                input_delta_action_mask = [_transforms.make_bool_mask(7, -6)]
+            else:
+                raise ValueError("At least one arm must be used.")
+            output_delta_action_mask = copy.deepcopy(input_delta_action_mask)
+            if self.use_tcp_pose:
+                if self.tcp_pose_in_wrist:
+                    tcp_to_camera_transform = [
+                        np.array([[0.0746, -0.9650, -0.2515, 0.05124],
+                                [-0.2318, 0.2285, -0.9455, -0.02052],
+                                [0.9699, 0.1288, -0.2066, -0.09482],
+                                [0, 0, 0, 1]]),
+                        np.array([[0.0746, -0.9650, -0.2515, 0.05124],
+                                [0.2318, -0.2285, 0.9455, 0.02052],
+                                [0.9699, 0.1288, -0.2066, -0.09482],
+                                [0, 0, 0, 1]])
+                    ]
+                    data_transforms = data_transforms.push(
+                        inputs=[DeltaPoseAction(action_mask, state_mask, False) for action_mask, state_mask in \
+                                zip(input_delta_action_mask, input_delta_action_mask)] + \
+                            [PoseActionTransformFrame(action_mask, True, np.linalg.inv(transform)) \
+                                for action_mask, transform in zip(input_delta_action_mask, tcp_to_camera_transform)],
+                        outputs=[AbsolutePoseAction(action_mask, state_mask, False) for action_mask, state_mask in \
+                                zip(input_delta_action_mask, input_delta_action_mask)] + \
+                                [PoseActionTransformFrame(action_mask, True, transform) \
+                                for action_mask, transform in zip(input_delta_action_mask, tcp_to_camera_transform)],
+                    )
+                else:
+                    chest_camera_pose = np.array([[-0.0016583  ,-0.49421638 , 0.86933735 , 0.10547365],
+                                                         [-0.99996612 , 0.00782894 , 0.00254325 , 0.02926773],
+                                                         [-0.00806291 ,-0.86930368 ,-0.49421261 , 0.41119803],
+                                                         [ 0.         , 0.         , 0.         , 1.        ]])
+                    data_transforms = data_transforms.push(
+                        inputs=[DeltaPoseAction(action_mask, state_mask, True) for action_mask, state_mask in \
+                                zip(input_delta_action_mask, input_delta_action_mask)] + \
+                               [PoseActionTransformFrame(action_mask, True, np.linalg.inv(chest_camera_pose)) \
+                                for action_mask in input_delta_action_mask],
+                        outputs=[AbsolutePoseAction(action_mask, state_mask, True) for action_mask, state_mask in \
+                                 zip(input_delta_action_mask, input_delta_action_mask)] + \
+                                [PoseActionTransformFrame(action_mask, True, chest_camera_pose) \
+                                 for action_mask in input_delta_action_mask],
+                    )
+            else:
+                data_transforms = data_transforms.push(
+                    inputs=[_transforms.DeltaActions(input_delta_action_mask)],
+                    outputs=[_transforms.AbsoluteActions(output_delta_action_mask)],
+                )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        # You do not need to change anything here for your own dataset.
+        model_transforms = ModelTransformFactory()(model_config)
+
+        # We return all data transforms for training and inference. No need to change anything here.
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            force_offline_dataset=self.force_offline_dataset,
+        )
+
+
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
@@ -524,6 +1026,8 @@ class TrainConfig:
     # eg. if total device is 4 and fsdp devices is 2; then the model will shard to 2 devices and run
     # data parallel between 2 groups of devices.
     fsdp_devices: int = 1
+
+    force_offline_dataset: bool = False
 
     @property
     def assets_dirs(self) -> pathlib.Path:
@@ -955,6 +1459,152 @@ _CONFIGS = [
         overwrite=True,
         exp_name="debug_pi05",
         wandb_enabled=False,
+    ),
+    #
+    # ZJ Humanoid Train configs.
+    #
+    #
+    # These train configs define the hyperparameters for fine-tuning the base model on your own dataset.
+    # They are used to define key elements like the dataset you are training on, the base checkpoint you
+    # are using, and other hyperparameters like how many training steps to run or what learning rate to use.
+    # For your own dataset, you can copy this class and modify the dataset name, and data transforms based on
+    # the comments below.
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_zjhumanoid_grasp_can",
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/chips_new_cleaned_2025091",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/data/dataset/grasp_can2/grasp_chips_can_raw/processed/chips_new_cleaned_20250919_unzipped/chips_clean_217"),
+                asset_id="chips",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=1e-4,
+            decay_steps=20_000,
+            decay_lr=1e-5,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=30_000,
+        log_interval=50,
+        save_interval=200,
+        keep_period=20_000,
+        batch_size=256,
+        num_workers=16,
+        force_offline_dataset=True,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_zjhumanoid_grasp_can_relative_trajectory",
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/chips_new_cleaned_2025091",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_grasp_can_relative_trajectory/zj-humanoid/chips_new_cleaned_2025091"),
+                asset_id="chips",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=True,
+            use_tcp_pose=True,
+            tcp_pose_in_wrist=True,
+            flip_wrist_images=True
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-6,
+            decay_steps=15_000,
+            decay_lr=1e-7,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=20_000,
+        log_interval=50,
+        save_interval=200,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=16,
+        force_offline_dataset=True,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_zjhumanoid_grasp_can_relative_trajectory_chest_camera",
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/chips_new_cleaned_2025091",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_grasp_can_relative_trajectory/zj-humanoid/chips_new_cleaned_2025091"),
+                asset_id="chips",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=True,
+            use_tcp_pose=True,
+            tcp_pose_in_wrist=False,
+            flip_wrist_images=True
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=1e-5,
+            decay_steps=15_000,
+            decay_lr=2e-7,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=20_000,
+        log_interval=50,
+        save_interval=200,
+        keep_period=20_000,
+        batch_size=128,
+        num_workers=16,
+        force_offline_dataset=True,
     ),
     #
     # RoboArena configs.

@@ -2,6 +2,7 @@ from collections.abc import Sequence
 import logging
 
 import torch
+import torchvision.transforms.functional as F
 
 from openpi.shared import image_tools
 
@@ -39,7 +40,7 @@ def preprocess_observation_pytorch(
 
         # TODO: This is a hack to handle both [B, C, H, W] and [B, H, W, C] formats
         # Handle both [B, C, H, W] and [B, H, W, C] formats
-        is_channels_first = image.shape[1] == 3  # Check if channels are in dimension 1
+        is_channels_first = image.shape[1] == 3  # Check if channels are in dimension 1+
 
         if is_channels_first:
             # Convert [B, C, H, W] to [B, H, W, C] for processing
@@ -134,6 +135,11 @@ def preprocess_observation_pytorch(
             saturation_factor = 0.5 + torch.rand(1, device=image.device) * 1.0  # Random factor between 0.5 and 1.5
             gray = image.mean(dim=-1, keepdim=True)
             image = gray + (image - gray) * saturation_factor
+
+            # Random hue shift (slightly rotate color wheel)
+            # hue_factor \in [-0.05, 0.05] corresponds to roughly 18 degree hue rotation
+            hue_factor = (torch.rand(1, device=image.device) * 2 - 1) * 0.05
+            image = F.adjust_hue(image.permute(0, 3, 1, 2), hue_factor.item()).permute(0, 2, 3, 1)
 
             # Clamp values to [0, 1]
             image = torch.clamp(image, 0, 1)

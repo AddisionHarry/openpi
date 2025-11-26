@@ -1,0 +1,6 @@
+# dexterous hand control service
+int8 id          # index of left hand and right hand, 0 indicates left and 1 indicates right
+float32[] q      # joint angle of 6-dof dexterous hand
+---
+bool success   # indicate successful run of triggered service
+string message # informational

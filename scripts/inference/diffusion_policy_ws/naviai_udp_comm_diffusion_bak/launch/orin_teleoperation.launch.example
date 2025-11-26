@@ -1,0 +1,64 @@
+<launch>
+    <arg name="use_wheeled_robot" default="true" />
+    <arg name="step_frequency" default="300" />
+    <arg name="use_gdb" default="false" />
+    <arg name="use_whole_robot" default="false" />
+    <arg name="command_frequency" default="300" />
+    <arg name="control_wheeled_robot_move" default="false" />
+
+    <group if="$(arg use_wheeled_robot)">
+        <group if="$(arg use_gdb)">
+            <node name="teleoperation_communication_robot_node" pkg="naviai_udp_comm"
+                type="naviai_udp_comm_wheeled_robot_node" output="screen"
+                launch-prefix="gdb -ex run --args ">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="192.168.88.100" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+                <param name="use_whole_robot" value="$(arg use_whole_robot)" />
+                <param name="use_wheeled_robot" value="$(arg use_wheeled_robot)" />
+                <param name="control_wheeled_robot_move" value="$(arg control_wheeled_robot_move)" />
+            </node>
+        </group>
+        <group unless="$(arg use_gdb)">
+            <node name="teleoperation_communication_robot_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_wheeled_robot_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="192.168.88.100" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+                <param name="use_whole_robot" value="$(arg use_whole_robot)" />
+                <param name="use_wheeled_robot" value="$(arg use_wheeled_robot)" />
+                <param name="control_wheeled_robot_move" value="$(arg control_wheeled_robot_move)" />
+            </node>
+        </group>
+    </group>
+
+    <group unless="$(arg use_wheeled_robot)">
+        <group if="$(arg use_gdb)">
+            <node name="teleoperation_communication_robot_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_robot_node" output="screen"
+                  launch-prefix="gdb -ex run --args ">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="192.168.88.100" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+                <param name="use_whole_robot" value="$(arg use_whole_robot)" />
+                <param name="use_wheeled_robot" value="$(arg use_wheeled_robot)" />
+                <param name="control_wheeled_robot_move" value="$(arg control_wheeled_robot_move)" />
+            </node>
+        </group>
+        <group unless="$(arg use_gdb)">
+            <node name="teleoperation_communication_robot_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_robot_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="192.168.88.100" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+                <param name="use_whole_robot" value="$(arg use_whole_robot)" />
+                <param name="use_wheeled_robot" value="$(arg use_wheeled_robot)" />
+                <param name="control_wheeled_robot_move" value="$(arg control_wheeled_robot_move)" />
+            </node>
+        </group>
+    </group>
+</launch>

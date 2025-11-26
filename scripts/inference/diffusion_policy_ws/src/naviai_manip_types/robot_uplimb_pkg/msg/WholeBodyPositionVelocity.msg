@@ -1,0 +1,12 @@
+float64[2] neckPosition
+float64[2] neckVelocity
+float64[8] leftArmPosition
+float64[8] leftArmVelocity
+float64[8] rightArmPosition
+float64[8] rightArmVelocity
+float64[6] leftHandPosition
+float64[6] leftHandVelocity
+float64[6] rightHandPosition
+float64[6] rightHandVelocity
+float64[4] waistPosition
+float64[4] waistVelocity

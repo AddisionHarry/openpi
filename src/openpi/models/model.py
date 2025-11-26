@@ -135,6 +135,35 @@ class Observation(Generic[ArrayT]):
         result["image_mask"] = result.pop("image_masks")
         return result
 
+    def check_for_nan(self, prefix: str = "observation") -> bool:
+        import math
+        has_nan = False
+        def check_tensor(tensor, name):
+            nonlocal has_nan
+            if not torch.is_tensor(tensor):
+                return
+            if torch.isnan(tensor).any():
+                print(f"NaN detected in {name}, shape={tuple(tensor.shape)}")
+                has_nan = True
+
+        for k, v in self.images.items():
+            check_tensor(v, f"{prefix}.images['{k}']")
+        for k, v in self.image_masks.items():
+            check_tensor(v.float(), f"{prefix}.image_masks['{k}']")
+        check_tensor(self.state, f"{prefix}.state")
+        optional_fields = [
+            ("tokenized_prompt", self.tokenized_prompt),
+            ("tokenized_prompt_mask", self.tokenized_prompt_mask),
+            ("token_ar_mask", self.token_ar_mask),
+            ("token_loss_mask", self.token_loss_mask),
+        ]
+        for name, val in optional_fields:
+            if val is not None:
+                check_tensor(val, f"{prefix}.{name}")
+        if not has_nan:
+            print("No NaN found in observation.")
+        return has_nan
+
 
 # Defines the format of the actions. This field is included as "actions" inside the dictionary
 # produced by the data transforms.
@@ -240,9 +269,9 @@ class BaseModelConfig(abc.ABC):
         state.replace_by_pure_dict(params)
         return nnx.merge(graphdef, state)
 
-    def load_pytorch(self, train_config, weight_path: str):
+    def load_pytorch(self, train_config, weight_path: str, compile_model=True):
         logger.info(f"train_config: {train_config}")
-        model = pi0_pytorch.PI0Pytorch(config=train_config.model)
+        model = pi0_pytorch.PI0Pytorch(config=train_config.model, compile_model=compile_model)
         safetensors.torch.load_model(model, weight_path)
         return model
 

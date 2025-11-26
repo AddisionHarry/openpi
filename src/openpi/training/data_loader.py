@@ -7,6 +7,7 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 
 import jax
 import jax.numpy as jnp
+from lerobot.common.datasets import utils as lerobot_utils
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
@@ -138,12 +139,24 @@ def create_torch_dataset(
         return FakeDataset(model_config, num_samples=1024)
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
-    dataset = lerobot_dataset.LeRobotDataset(
-        data_config.repo_id,
-        delta_timestamps={
-            key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
-        },
-    )
+    if data_config.force_offline_dataset:
+        import os
+        def _offline_get_safe_version(repo_id, revision=None):
+            print(f"[LeRobot OFFLINE MODE] Skipping remote check for repo: {repo_id}")
+            return "local"
+        lerobot_utils.get_safe_version = _offline_get_safe_version
+        lerobot_dataset.get_safe_version = _offline_get_safe_version
+        dataset = lerobot_dataset.LeRobotDataset(
+            data_config.repo_id,
+            root=os.getenv("HF_LEROBOT_HOME") + f"/{data_config.repo_id}",
+            delta_timestamps={ key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys },
+            revision=None, force_cache_sync=False
+        )
+    else:
+        dataset = lerobot_dataset.LeRobotDataset(
+            data_config.repo_id,
+            delta_timestamps={ key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys },
+        )
 
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
@@ -438,8 +451,10 @@ class TorchDataLoader:
             sampler=sampler,
             num_workers=num_workers,
             multiprocessing_context=mp_context,
+            prefetch_factor=8,
             persistent_workers=num_workers > 0,
             collate_fn=_collate_fn,
+            pin_memory=True,
             worker_init_fn=_worker_init_fn,
             drop_last=True,
             generator=generator,

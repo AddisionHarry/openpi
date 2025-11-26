@@ -1,0 +1,11 @@
+robot_uplimb_pkg/WholeBodyPositionVelocity target
+
+bool neckValid
+bool leftArmValid
+bool rightArmValid
+bool leftHandValid
+bool rightHandValid
+bool waistValid
+
+bool leftArmSlowMoveJFlag
+bool rightArmSlowMoveJFlag

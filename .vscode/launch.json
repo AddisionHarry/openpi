@@ -1,0 +1,75 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug compute_norm_stats (uv env)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/compute_norm_stats.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--config-name",
+                "pi05_zjhumanoid_grasp_can_relative_trajectory"
+            ],
+            "python": "/root/openpi/.venv/bin/python",
+            "env": {
+                "ROOT": "/mnt/pfs/openpi_train_data/huggingface_root",
+                "HF_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface",
+                "HF_LEROBOT_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface/lerobot",
+                "HF_DATASETS_CACHE": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface/datasets",
+                "HF_HUB_CACHE": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface/hub",
+                "XDG_CACHE_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache",
+                "OPENPI_DATA_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/openpi",
+                "TMPDIR": "/mnt/pfs/openpi_train_data/huggingface_root/.tmp",
+                "http_proxy": "http://192.168.32.11:18000",
+                "https_proxy": "http://192.168.32.11:18000",
+                "NO_PROXY": "localhost,127.0.0.1,0.0.0.0"
+            }
+        },
+        {
+            "name": "Debug train.py (uv env)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/train.py",
+            "console": "integratedTerminal",
+            "args": [
+                "pi05_zjhumanoid_grasp_can_relative_trajectory",
+                "--exp-name=relative",
+                "--overwrite"
+            ],
+            "python": "/root/openpi/.venv/bin/python",
+            "env": {
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
+                "ROOT": "/mnt/pfs/openpi_train_data/huggingface_root",
+                "HF_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface",
+                "HF_LEROBOT_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface/lerobot",
+                "HF_DATASETS_CACHE": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface/datasets",
+                "HF_HUB_CACHE": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface/hub",
+                "XDG_CACHE_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache",
+                "OPENPI_DATA_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/openpi",
+                "TMPDIR": "/mnt/pfs/openpi_train_data/huggingface_root/.tmp",
+                "http_proxy": "http://192.168.32.11:18000",
+                "https_proxy": "http://192.168.32.11:18000",
+                "NO_PROXY": "localhost,127.0.0.1,0.0.0.0",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "TORCHINDUCTOR_COMPILE_THREADS": "1"
+            }
+        },
+        {
+            "name": "Attach to remote training",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/root/openpi"
+                }
+            ],
+            "justMyCode": false
+        }
+    ]
+}

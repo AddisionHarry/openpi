@@ -23,7 +23,7 @@ def ensure_gsutil_download(model_name: str, model_link: str, target_dir: Path):
         print(f"[INFO] Model exists in {local_model_dir}, skip downloading.")
         return local_model_dir
 
-    print(f"[INFO] Using gsutil downloading model: {model_name}")
+    print(f"[INFO] Using gsutil to download model: {model_name}")
     try:
         subprocess.run(
             [
@@ -45,11 +45,14 @@ def main():
     parser = argparse.ArgumentParser(description="Download and load OpenPI model using gsutil.")
     parser.add_argument("--model", required=True, choices=MODEL_LINKS.keys(),
                         help="Model name to download and load.")
+    parser.add_argument("--save-dir", default=None,
+                        help="Optional path to save the model (default: ./models/official_checkpoints)")
     args = parser.parse_args()
 
     current_file = Path(__file__).resolve()
     parent_dir = current_file.parent.parent
-    target_dir = parent_dir / "models" / "official_checkpoints"
+    target_dir = Path(args.save_dir) if args.save_dir else (parent_dir / "models" / "official_checkpoints")
+
     os.environ["OPENPI_DATA_HOME"] = str(target_dir)
 
     model_name = args.model
@@ -61,8 +64,9 @@ def main():
         from openpi.training import config
         from openpi.policies import policy_config
 
-        config = config.get_config(model_name)
-        policy = policy_config.create_trained_policy(config, checkpoint_dir)
+        cfg = config.get_config(model_name)
+        policy = policy_config.create_trained_policy(cfg, checkpoint_dir)
+        print(f"[SUCCESS] Model {model_name} loaded successfully from {checkpoint_dir}")
 
     except Exception:
         traceback.print_exc()

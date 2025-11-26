@@ -30,6 +30,7 @@ import os
 import platform
 import shutil
 import time
+import math
 
 import jax
 import numpy as np
@@ -37,6 +38,7 @@ import safetensors.torch
 import torch
 import torch.distributed as dist
 import torch.nn.parallel
+import torch.nn.functional as F
 import tqdm
 import wandb
 
@@ -81,7 +83,7 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
 
     if resuming:
         run_id = (ckpt_dir / "wandb_id.txt").read_text().strip()
-        wandb.init(id=run_id, resume="must", project=config.project_name)
+        wandb.init(id=run_id, resume="allow", project=config.project_name)
     else:
         wandb.init(
             name=config.exp_name,
@@ -304,6 +306,21 @@ def log_memory_usage(device, step, phase="unknown"):
     logging.info(
         f"Step {step} ({phase}): GPU memory - allocated: {memory_allocated:.2f}GB, reserved: {memory_reserved:.2f}GB, free: {memory_free:.2f}GB, peak_allocated: {max_memory_allocated:.2f}GB, peak_reserved: {max_memory_reserved:.2f}GB{ddp_info}"
     )
+
+def check_for_nan(tensor, name, step, extra_info=None):
+    if not torch.is_tensor(tensor):
+        return False
+    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+        print("\n" + "="*80)
+        print(f"[NaN DETECTED] at step {step}")
+        print(f"Variable name: {name}")
+        print(f"Tensor shape: {tuple(tensor.shape)} dtype: {tensor.dtype}")
+        print(f"Value sample: {tensor.flatten()[:10].tolist()}")
+        if extra_info:
+            print(f"Extra context: {extra_info}")
+        print("="*80 + "\n")
+        return True
+    return False
 
 
 def train_loop(config: _config.TrainConfig):
@@ -535,8 +552,40 @@ def train_loop(config: _config.TrainConfig):
 
             loss = losses.mean()
 
+            if check_for_nan(loss, "loss", global_step, extra_info={
+                "lr": optim.param_groups[0]["lr"],
+                "device": str(device),
+                "observation_mean": float(observation.state.mean().detach().cpu().numpy()) if hasattr(observation, "state") else None,
+                "action_mean": float(actions.mean().detach().cpu().numpy()),
+                "action_std": float(actions.std().detach().cpu().numpy()),
+            }):
+                print("Dumping last batch tensors for inspection...")
+                torch.save({
+                    "observation": observation,
+                    "actions": actions,
+                    "loss": loss,
+                    "step": global_step,
+                }, f"nan_debug_step_{global_step}.pt")
+                raise RuntimeError("NaN loss detected, training aborted.")
+
             # Backward pass
             loss.backward()
+
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    if check_for_nan(param.grad, f"grad[{name}]", global_step, {
+                        "device": str(param.device),
+                        "requires_grad": param.requires_grad,
+                        "grad_norm": float(param.grad.norm().detach().cpu()) if param.grad.numel() > 0 else 0.0,
+                    }):
+                        print(f"NaN detected in gradient: {name}")
+                        torch.save({
+                            "step": global_step,
+                            "param_name": name,
+                            "grad": param.grad.detach().cpu(),
+                            "param": param.detach().cpu(),
+                        }, f"nan_grad_debug_step_{global_step}_{name.replace('.', '_')}.pt")
+                        raise RuntimeError("NaN grad detected, training aborted.")
 
             # Log memory usage after backward pass
             if global_step < 5 and is_main and torch.cuda.is_available():
@@ -544,6 +593,18 @@ def train_loop(config: _config.TrainConfig):
 
             # Gradient clipping
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optimizer.clip_gradient_norm)
+
+            if math.isnan(grad_norm) or math.isinf(grad_norm):
+                print("\n" + "=" * 100)
+                print(f"[NaN/Inf GRAD NORM DETECTED] at step {global_step}")
+                print(f"grad_norm = {grad_norm}")
+                print("=" * 100)
+                torch.save({
+                    "step": global_step,
+                    "grad_norm": grad_norm,
+                    "model_state": model.state_dict(),
+                }, f"nan_gradnorm_debug_step_{global_step}.pt")
+                raise RuntimeError("NaN grad detected, training aborted.")
 
             # Optimizer step
             optim.step()
@@ -572,6 +633,15 @@ def train_loop(config: _config.TrainConfig):
                 avg_loss = sum(info["loss"] for info in infos) / len(infos)
                 avg_lr = sum(info["learning_rate"] for info in infos) / len(infos)
 
+                # # Val action MSE loss
+                # with torch.no_grad():
+                #     predicted_action = (
+                #         model.module.sample_actions(device, observation)
+                #         if use_ddp else model.sample_actions(device, observation)
+                #     )
+                #     action_mse = F.mse_loss(predicted_action, actions).item()
+                # del predicted_action
+
                 avg_grad_norm = None
                 if any("grad_norm" in info for info in infos):
                     vals = [
@@ -579,6 +649,11 @@ def train_loop(config: _config.TrainConfig):
                     ]
                     if len(vals) > 0:
                         avg_grad_norm = sum(vals) / len(vals)
+                # logging.info(
+                #     f"step={global_step} loss={avg_loss:.4f} action_mse={avg_action_mse:.4f} lr={avg_lr:.2e} grad_norm={avg_grad_norm:.2f} time={elapsed:.1f}s"
+                #     if avg_grad_norm is not None
+                #     else f"step={global_step} loss={avg_loss:.4f} action_mse={avg_action_mse:.4f} lr={avg_lr:.2e} time={elapsed:.1f}s"
+                # )
                 logging.info(
                     f"step={global_step} loss={avg_loss:.4f} lr={avg_lr:.2e} grad_norm={avg_grad_norm:.2f} time={elapsed:.1f}s"
                     if avg_grad_norm is not None
@@ -589,6 +664,7 @@ def train_loop(config: _config.TrainConfig):
                 if config.wandb_enabled and len(infos) > 0:
                     log_payload = {
                         "loss": avg_loss,
+                        # "action_mse": avg_action_mse,
                         "learning_rate": avg_lr,
                         "step": global_step,
                         "time_per_step": elapsed / config.log_interval,
@@ -629,4 +705,10 @@ def main():
 
 
 if __name__ == "__main__":
+    if os.environ.get("DEBUG_MODE", "0") == "1" and int(os.environ.get("RANK", "0")) == 0:
+        import debugpy
+        debugpy.listen(("0.0.0.0", 5678))
+        print("Waiting for VS Code debugger to attach on port 5678...")
+        debugpy.wait_for_client()
+        print("Debugger attached, resuming execution...")
     main()

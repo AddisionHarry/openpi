@@ -1,0 +1,66 @@
+<launch>
+    <arg name="use_robot_type" default="H1_Pro" />
+    <arg name="step_frequency" default="300" />
+    <arg name="command_frequency" default="300" />
+    <arg name="run_local" default="false" />
+    <arg name="ip" default="192.168.88.102" />
+
+    <group unless="$(arg run_local)">
+        <group if="$(eval arg('use_robot_type') == 'WA1_0303')">
+            <node name="teleoperation_communication_server_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_wa1_0303_server_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="$(arg ip)" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+            </node>
+        </group>
+        <group if="$(eval arg('use_robot_type') == 'H1_Pro')">
+            <node name="teleoperation_communication_server_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_h1pro_server_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="$(arg ip)" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+            </node>
+        </group>
+        <group if="$(eval arg('use_robot_type') == 'WA2_A2_lite')">
+            <node name="teleoperation_communication_server_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_wa2_a2_lite_server_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="$(arg ip)" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+            </node>
+        </group>
+    </group>
+    <group if="$(arg run_local)">
+        <group if="$(eval arg('use_robot_type') == 'WA1_0303')">
+            <node name="teleoperation_local_control_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_wa1_0303_local_control_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="$(arg ip)" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+            </node>
+        </group>
+        <group if="$(eval arg('use_robot_type') == 'H1_Pro')">
+            <node name="teleoperation_local_control_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_h1pro_local_control_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="$(arg ip)" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+            </node>
+        </group>
+        <group if="$(eval arg('use_robot_type') == 'WA2_A2_lite')">
+            <node name="teleoperation_local_control_node" pkg="naviai_udp_comm"
+                  type="naviai_udp_comm_wa2_a2_lite_local_control_node" output="screen">
+                <param name="use_given_target_ip" value="true" />
+                <param name="target_ip" value="$(arg ip)" />
+                <param name="step_frequency" value="$(arg step_frequency)" />
+                <param name="command_frequency" value="$(arg command_frequency)" />
+            </node>
+        </group>
+    </group>
+</launch>
