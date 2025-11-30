@@ -140,15 +140,16 @@ def unparse_observation(message: Dict, device: str) -> Dict:
     # head_left_image = parse_image_from_message_np(message['head_left_rgb'], device, image_format='rgb', dtype='float')
     chest_image = parse_image_from_message_np(message['chest_rgb'], device, image_format='rgb', dtype='float')
     right_wrist_image = parse_image_from_message_np(message['wrist_right_image'], device, image_format='rgb', dtype='float')
+    left_wrist_image = parse_image_from_message_np(message['wrist_left_image'], device, image_format='rgb', dtype='float')
     # arm joints pos
-    # left_arm_joints_pos = np.array(message['left_arm_joint_angles']).reshape(-1)
+    left_arm_joints_pos = np.array(message['left_arm_joint_angles']).reshape(-1)
     right_arm_joints_pos = np.array(message['right_arm_joint_angles']).reshape(-1)
     # hand joints pos
-    # left_hand_joints_pos = np.array(message['left_hand_joints']).reshape(-1)
+    left_hand_joints_pos = np.array(message['left_hand_joints']).reshape(-1)
     right_hand_joints_pos = np.array(message['right_hand_joints']).reshape(-1)
     # head & waist joints pos
     # neck_joints_pos = np.array(message['head_angles']).reshape(-1)
-    # waist_joints_pos = np.array(message['chest_angles']).reshape(-1)
+    waist_joints_pos = np.array(message['waist_angles']).reshape(-1)[:2]
     # arm joints velocity
     # left_arm_joints_vel = np.array(message['left_arm_joint_velocities']).reshape(-1)
     # right_arm_joints_vel = np.array(message['right_arm_joint_velocities']).reshape(-1)
@@ -156,7 +157,7 @@ def unparse_observation(message: Dict, device: str) -> Dict:
     # neck_joints_vel = np.array(message['head_joint_velocities']).reshape(-1)
     # waist_joints_vel = np.array(message['chest_joint_velocities']).reshape(-1)
     # eef
-    # left_tcp_pose_in_chest = np.array(message['left_tcp_pose_in_chest']).reshape(-1)
+    left_tcp_pose_in_chest = np.array(message['left_tcp_pose_in_chest']).reshape(-1)
     right_tcp_pose_in_chest = np.array(message['right_tcp_pose_in_chest']).reshape(-1)
     # forces
     # left_hand_force = np.array(message['left_hand_force']).reshape(-1)
@@ -168,13 +169,15 @@ def unparse_observation(message: Dict, device: str) -> Dict:
 
     return {
         "observation/images/chest_rgb": chest_image,
+        "observation/images/left_wrist_rgb": left_wrist_image,
         "observation/images/right_wrist_rgb": right_wrist_image,
-        # "observation/end_effector/left_tcp": left_tcp_pose_in_chest,
+        "observation/end_effector/left_tcp": left_tcp_pose_in_chest,
         "observation/end_effector/right_tcp": right_tcp_pose_in_chest,
-        # "observation/left_arm_joint_position": left_arm_joints_pos,
+        "observation/left_arm_joint_position": left_arm_joints_pos,
         "observation/right_arm_joint_position": right_arm_joints_pos,
-        # "observation/left_hand_joint_position": left_hand_joints_pos,
+        "observation/left_hand_joint_position": left_hand_joints_pos,
         "observation/right_hand_joint_position": right_hand_joints_pos,
+        "observation/waist_joint_position": waist_joints_pos,
         "prompt":"do something",
         "timestamp": timestamp,
     }

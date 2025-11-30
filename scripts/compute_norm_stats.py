@@ -106,6 +106,12 @@ def main(config_name: str, max_frames: int | None = None):
     for batch in tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats"):
         for key in keys:
             stats[key].update(np.asarray(batch[key]))
+    # start_batch = 48
+    # for i, batch in enumerate(tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats")):
+    #     if i < start_batch:
+    #         continue
+    #     for key in keys:
+    #         stats[key].update(np.asarray(batch[key]))
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
@@ -115,4 +121,11 @@ def main(config_name: str, max_frames: int | None = None):
 
 
 if __name__ == "__main__":
+    import os
+    if os.environ.get("DEBUG_MODE", "0") == "1":
+        import debugpy
+        debugpy.listen(("0.0.0.0", 5678))
+        print("Waiting for VS Code debugger to attach on port 5678...")
+        debugpy.wait_for_client()
+        print("Debugger attached, resuming execution...")
     tyro.cli(main)

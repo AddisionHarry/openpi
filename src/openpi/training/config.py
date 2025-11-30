@@ -466,9 +466,10 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 
 
 class SplitStateTransform:
-    def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False):
+    def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False, use_waist_angles: bool = False):
         self.use_arms = use_arms
         self.use_tcp_pose = use_tcp_pose
+        self.use_waist_angles = use_waist_angles
 
     def __call__(self, data):
         state = data["observation.state"]
@@ -486,6 +487,8 @@ class SplitStateTransform:
             data["observation/right_hand_joint_position"] = state[58:64]
         if not self.use_arms[0] and not self.use_arms[1]:
             raise ValueError("At least one arm must be used.")
+        if self.use_waist_angles:
+            data["observation/waist_joint_position"] = state[16:18]
         return data
 
 class PackActionTransform:
@@ -816,6 +819,8 @@ class LeRobotZJHumanoidDataConfig(DataConfigFactory):
     force_offline_dataset: bool = True
 
     use_arms: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
+    obs_use_waist_angles: bool = False
+    action_use_waist_angles: bool = False
     use_wrist_cameras: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
 
     use_tcp_pose: bool = False
@@ -854,10 +859,12 @@ class LeRobotZJHumanoidDataConfig(DataConfigFactory):
             else:
                 mapping["observation/right_arm_joint_position"] = "observation/right_arm_joint_position"
             mapping["observation/right_hand_joint_position"] = "observation/right_hand_joint_position"
+        if self.obs_use_waist_angles:
+            mapping["observation/waist_joint_position"] = "observation/waist_joint_position"
 
         repack_transform = _transforms.Group(
             inputs=[
-                SplitStateTransform(self.use_arms, self.use_tcp_pose),
+                SplitStateTransform(self.use_arms, self.use_tcp_pose, self.obs_use_waist_angles),
                 PackActionTransform(self.use_arms, self.use_tcp_pose),
                 _transforms.RepackTransform(mapping),
             ]
@@ -872,9 +879,9 @@ class LeRobotZJHumanoidDataConfig(DataConfigFactory):
         data_transforms = _transforms.Group(
             inputs=[zjhumanoid_policy.ZJHumanoidInputs(model_type=model_config.model_type,
                                                        use_arms=self.use_arms, use_wrist_cameras=self.use_wrist_cameras,
-                                                       use_tcp_pose=self.use_tcp_pose,
+                                                       use_tcp_pose=self.use_tcp_pose, use_waist_angles=self.obs_use_waist_angles,
                                                        flip_wrist_images=self.flip_wrist_images)],
-            outputs=[zjhumanoid_policy.ZJHumnanoidOutputs(use_arms=self.use_arms)],
+            outputs=[zjhumanoid_policy.ZJHumnanoidOutputs(use_arms=self.use_arms, use_waist_angles=self.action_use_waist_angles)],
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first
@@ -1604,6 +1611,56 @@ _CONFIGS = [
         keep_period=20_000,
         batch_size=128,
         num_workers=16,
+        force_offline_dataset=True,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_zjhumanoid_industrial_sorting",
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/industrial_sorting_cleaned_20251128",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128"),
+                asset_id="industrial_sorting",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[True, False],
+            use_wrist_cameras=[True, False],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=False
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=2_000,
+            peak_lr=1e-4,
+            decay_steps=20_000,
+            decay_lr=1e-5,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=50,
+        save_interval=100,
+        keep_period=20_000,
+        batch_size=256,
+        num_workers=29,
+        # num_workers=16,
         force_offline_dataset=True,
     ),
     #

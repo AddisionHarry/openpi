@@ -13,6 +13,7 @@ def make_zj_humanoid_example(
     use_arms: List[bool] = [True, True],
     use_tcp_pose: bool = False,
     use_wrist_cameras: List[bool] = [True, True],
+    use_waist_angles: bool = False
 ) -> dict:
     """Creates a random humanoid observation example for testing.
 
@@ -45,6 +46,9 @@ def make_zj_humanoid_example(
             obs["observation/right_arm_joint_position"] = np.random.rand(7)
         obs["observation/right_hand_joint_position"] = np.random.rand(6)
 
+    if use_waist_angles:
+        obs["observation/waist_joint_position"] = np.random.rand(2)
+
     return obs
 
 
@@ -73,6 +77,7 @@ class ZJHumanoidInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
     use_arms: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
+    use_waist_angles: bool = False
     use_wrist_cameras: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
     use_tcp_pose: bool = False
     flip_wrist_images: bool = False
@@ -107,6 +112,9 @@ class ZJHumanoidInputs(transforms.DataTransformFn):
             state = np.concatenate([right_arm, right_hand])
         else:
             raise ValueError("At least one arm must be used.")
+        if self.use_waist_angles:
+            waist_angles = np.asarray(data["observation/waist_joint_position"], dtype=np.float32)
+            state = np.concatenate([state, waist_angles])
 
         # Create inputs dict. Do not change the keys in the dict below.
         inputs = {
@@ -150,15 +158,17 @@ class ZJHumnanoidOutputs(transforms.DataTransformFn):
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
     use_arms: List[bool] = dataclasses.field(default_factory=lambda: [False, True])
+    use_waist_angles: bool = False
 
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
+        waist_angles = 2 if self.use_waist_angles else 0
         if self.use_arms[0] and self.use_arms[1]:
-            return {"actions": np.asarray(data["actions"][:, :26])}
+            return {"actions": np.asarray(data["actions"][:, :(26 + waist_angles)])}
         elif self.use_arms[0] or self.use_arms[1]:
-            return {"actions": np.asarray(data["actions"][:, :13])}
+            return {"actions": np.asarray(data["actions"][:, :(13 + waist_angles)])}
         else:
             raise ValueError("At least one arm must be used.")

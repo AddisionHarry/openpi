@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import argparse
 import cv2
 import json
 import time
@@ -21,13 +22,11 @@ from geometry_msgs.msg import Pose
 from cv_bridge import CvBridge
 
 from naviai_udp_comm.msg import TeleoperationUDPRaw  # type: ignore
+from robot_uplimb_pkg.msg import servoL # type: ignore
 from publish_action import set_target
 from record_data import DataRecorder
 from interpolators import TrajectoryInterpolator, QuaternionTrajectoryInterpolator
 
-
-SERVER_IP = "120.48.58.215"
-SERVER_PORT = 1590
 
 HEADER = b"NAVIAI_DIFFUSION_POLICY"
 PACK_LEN_INDICATOR_LEN = 4
@@ -35,11 +34,14 @@ PACK_LEN_INDICATOR_LEN = 4
 IMAGE_WIDTH = 640
 IMAGE_HEIGHT = 480
 
-RECORD_DATA = True
-
+MOVE_USE_SERVOL = True
 
 class DiffusionInferenceNode:
     def __init__(self):
+        self.parse_args()
+        assert self.args.chunk_fps > 0
+        assert self.args.inter_inference_sleep_time > 0
+
         rospy.init_node("diffusion_inference_node", anonymous=True, log_level=rospy.DEBUG)
         self.bridge = CvBridge()
 
@@ -59,7 +61,10 @@ class DiffusionInferenceNode:
         self.observation_images_chest_rgb = None
 
         self.target_publisher = rospy.Publisher("/teleoperation_ctrl_cmd/recv_raw", TeleoperationUDPRaw, queue_size=10)
-        self.target_tcp_publisher = [rospy.Publisher(name, Float32MultiArray, queue_size=10) for name in ("left_arm_vel_cmd", "right_arm_vel_cmd")]
+        if MOVE_USE_SERVOL:
+            self.target_tcp_publisher = rospy.Publisher("/arm_servol", servoL, queue_size=10)
+        else:
+            self.target_tcp_publisher = [rospy.Publisher(name, Float32MultiArray, queue_size=10) for name in ("left_arm_vel_cmd", "right_arm_vel_cmd")]
         self.pose_control_error_publisher = [rospy.Publisher(name, Float32MultiArray, queue_size=10) \
             for name in ("/vla_interence_left_tcp_pose_control_error", "/vla_interence_right_tcp_pose_control_error")]
 
@@ -91,7 +96,7 @@ class DiffusionInferenceNode:
         self.last_control_pose = [np.array([0.0] * 7), np.array([0.0] * 7)]
         self.control_pose_feedback_new_data_rate = 0.5
 
-        if RECORD_DATA:
+        if self.args.record_data:
             self.record_data = DataRecorder()
 
         # Start inference thread
@@ -106,9 +111,9 @@ class DiffusionInferenceNode:
         # startup_hand_target = [[[0.0] * 6, [0.0] * 6], [[0.0] * 6, [0.0] * 6]]
         # startup_waist_target = [[0, 0.15], [0, 0.15]]
         startup_neck_target = [[0.0, 0.0], [0.0, 0.0]]
-        startup_arm_target = [[[0, 0.6, 0.5, -0.05, 0, 0.0, 0],
+        startup_arm_target = [[[-0.6, 0.55, -1.0, -1.1, 0.4, 0.0, 0],
                                [0.6, -0.55, -1.0, -1.1, 0.4, 0, 0]],
-                              [[0, 0.6, 0.5, -0.05, 0, 0.0, 0],
+                              [[-0.6, 0.55, -1.0, -1.1, 0.4, 0.0, 0],
                                [0.6, -0.55, -1.0, -1.1, 0.4, 0, 0]]]
         startup_hand_target = [[[0.0] * 6, [-1, 1, 0, 0, 0, 0]], [[0.0] * 6, [-1, 1, 0, 0, 0, 0]]]
         startup_waist_target = [[0, 0.0], [0, 0.0]]
@@ -136,6 +141,33 @@ class DiffusionInferenceNode:
         if hasattr(self, "record_data"):
             self.record_data.close()
 
+    def parse_args(self) -> None:
+        parser = argparse.ArgumentParser(description='Naviai Diffusion Policy Server')
+
+        parser.add_argument('--server_ip', type=str, default="120.48.58.215",
+                        help='Server IP address')
+        parser.add_argument('--server_port', type=int, default=2857,
+                        help='Server port number')
+
+        parser.add_argument('--record_data', action='store_true', default=False,
+                        help='Enable data recording')
+        parser.add_argument('--no-record_data', dest='record_data', action='store_false',
+                        help='Disable data recording')
+        parser.add_argument('--chunk_fps', type=int, default=10,
+                        help='Frames per second for chunk recording')
+        parser.add_argument('--joint_target', action='store_true', default=True,
+                        help='Use joint target mode')
+        parser.add_argument('--no-joint_target', dest='joint_target', action='store_false',
+                        help='Disable joint target mode')
+        parser.add_argument('--inter_inference_sleep_time', type=float, default=0.3,
+                        help='Sleep time between inferences in seconds')
+        parser.add_argument('--control-left', dest='control_left_arm', action='store_true', default=False,
+                        help='Enable left mode')
+        parser.add_argument('--control-right', dest='control_left_arm', action='store_false',
+                            help='Enable right mode')
+
+        self.args = parser.parse_args()
+
     def establish_connection(self) -> None:
         start_wait = time.time()
         max_wait = 30
@@ -144,8 +176,8 @@ class DiffusionInferenceNode:
             try:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sock.settimeout(5)
-                self.sock.connect((SERVER_IP, SERVER_PORT))
-                rospy.loginfo(f"Connected to server {SERVER_IP}:{SERVER_PORT}")
+                self.sock.connect((self.args.server_ip, self.args.server_port))
+                rospy.loginfo(f"Connected to server {self.args.server_ip}:{self.args.server_port}")
                 self.sock.settimeout(None)
                 self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1<<20)  # 1MB buffer
@@ -237,7 +269,7 @@ class DiffusionInferenceNode:
         return json.dumps({
             # "head_left_rgb": self.encode_image(self.observation_images_head_left_rgb),
             # "head_right_rgb": self.encode_image(self.observation_images_head_right_rgb),
-            # "wrist_left_image": self.encode_image(self.observation_images_wrist_left_rgb),
+            "wrist_left_image": self.encode_image(self.observation_images_wrist_left_rgb),
             "wrist_right_image": self.encode_image(self.observation_images_wrist_right_rgb),
             "chest_rgb": self.encode_image(self.observation_images_chest_rgb),
 
@@ -313,8 +345,11 @@ class DiffusionInferenceNode:
             rospy.logerr(f"MoveL failed for {'left' if is_left else 'right'} arm: {e}")
 
     def check_data_have_received(self) -> bool:
-        if not all([self.observation_images_head_left_rgb is not None,
-                    self.observation_images_head_right_rgb is not None,
+        # if not all([self.observation_images_head_left_rgb is not None,
+        #             self.observation_images_head_right_rgb is not None,
+        #             self.observation_images_chest_rgb is not None]):
+        if not all([self.observation_images_wrist_left_rgb is not None,
+                    self.observation_images_wrist_right_rgb is not None,
                     self.observation_images_chest_rgb is not None]):
             rospy.logwarn_throttle(1, "Waiting for image data...")
             return False
@@ -343,20 +378,19 @@ class DiffusionInferenceNode:
             if not response:
                 continue
             actions = response.get("predicted_action")
-            observation = response.get("observation")
             if not actions:
                 rospy.logerr(f"Invalid response from server: {response}")
                 continue
             action_length = len(actions[0])
-            if action_length in (13, 28) and observation:
+            if action_length in (13, 28):
                 pass
             else:
-                rospy.logerr(f"Invalid action length {action_length} or missing observation")
+                rospy.logerr(f"Invalid action length {action_length}")
             new_action = []
             for i, action in enumerate(actions):
                 act_arr = np.asarray(action, dtype=np.float32)
                 new_action.append({
-                    "timestamp": float(response["timestamp"]) + float(i) * (1 / 30) * 3,
+                    "timestamp": float(response["timestamp"]) + float(i + 1) * (1 / self.args.chunk_fps) * 3,
                     "values": act_arr
                 })
             with self.action_lock:
@@ -364,7 +398,7 @@ class DiffusionInferenceNode:
                 self.action_recv_time = [self.action_recv_time[1], time.time()]
             if hasattr(self, "record_data"):
                 self.record_data.record_network_actions(response["timestamp"], actions)
-            time.sleep(1)
+            time.sleep(self.args.inter_inference_sleep_time)
 
     def move_robot_timer_thread(self) -> None:
         while self.run_flag:
@@ -447,18 +481,46 @@ class DiffusionInferenceNode:
                                                    [final_vals[7:13].tolist(), final_vals[20:26].tolist()],
                                                    [0, 0, 0, 0])
             elif len(final_vals) == 13:
-                self.set_target_using_tcp_pose(False, True, True,
-                                                [0, 0],
-                                                [self.observation_left_tcp_pose_in_chest, final_vals[0:7].tolist()],
-                                                [self.observation_joints_hand_left, final_vals[7:13].tolist()],
-                                                [0, 0, 0, 0],
-                                                # [[0.0] * 6, list(final_velocities[0:3]) + list(tcp_ori_velocities[0])])
-                                                [[0.0] * 6, [0.0] * 6])
-                if hasattr(self, "record_data"):
-                    self.record_data.record_target_pose(time.time(), self.observation_left_tcp_pose_in_chest,
-                                                        [0.0] * 6, final_vals[0:7].tolist(),
-                                                        list(final_velocities[0:3]) + list(tcp_ori_velocities[0]))
-                    self.record_data.record_tcp_pose(time.time(), self.observation_left_tcp_pose_in_chest, self.observation_right_tcp_pose_in_chest)
+                if self.args.joint_target:
+                    if self.args.control_left_arm:
+                        self.set_target_using_joint_angles(True, True, True,
+                                                   [-0.2, 0.1],
+                                                   [final_vals[0:7].tolist(), self.observation_joints_arm_right],
+                                                   [final_vals[7:13].tolist(), self.observation_joints_hand_right],
+                                                   [0, 0.16263192860378695, 0, 0])
+                    else:
+                        self.set_target_using_joint_angles(True, True, True,
+                                                    [-0.2, 0.1],
+                                                    [self.observation_joints_arm_left, final_vals[0:7].tolist()],
+                                                    [self.observation_joints_hand_left, final_vals[-6:].tolist()],
+                                                    [0, 0.16263192860378695, 0, 0])
+                else:
+                    if not self.args.control_left_arm:
+                        self.set_target_using_tcp_pose(False, True, True,
+                                                        [0, 0],
+                                                        [self.observation_left_tcp_pose_in_chest, final_vals[0:7].tolist()],
+                                                        [self.observation_joints_hand_left, final_vals[7:13].tolist()],
+                                                        [0, 0, 0, 0],
+                                                        # [[0.0] * 6, list(final_velocities[0:3]) + list(tcp_ori_velocities[0])])
+                                                        [[0.0] * 6, [0.0] * 6])
+                    else:
+                        self.set_target_using_tcp_pose(False, True, True,
+                                                        [0, 0],
+                                                        [final_vals[0:7].tolist(), self.observation_right_tcp_pose_in_chest],
+                                                        [final_vals[7:13].tolist(), self.observation_joints_hand_right],
+                                                        [0, 0, 0, 0],
+                                                        # [list(final_velocities[0:3]) + list(tcp_ori_velocities[0]), [0.0] * 6])
+                                                        [[0.0] * 6, [0.0] * 6])
+                    if hasattr(self, "record_data"):
+                        self.record_data.record_target_pose(time.time(), self.observation_left_tcp_pose_in_chest,
+                                                            [0.0] * 6, final_vals[0:7].tolist(),
+                                                            list(final_velocities[0:3]) + list(tcp_ori_velocities[0]))
+                        if self.args.joint_target:
+                            self.record_data.record_tcp_pose(time.time(), self.observation_joints_arm_left,
+                                                                self.observation_joints_arm_right)
+                        else:
+                            self.record_data.record_tcp_pose(time.time(), self.observation_left_tcp_pose_in_chest,
+                                                             self.observation_right_tcp_pose_in_chest)
             else:
                 rospy.logfatal(f"Invalid length: {len(final_vals)}")
 
@@ -473,33 +535,54 @@ class DiffusionInferenceNode:
                                                  neck_target, [[0.0] * 7 for _ in range(2)],
                                                  hand_target, waist_target))
         if arm_target_valid:
-            curent_tcp_poses = [self.observation_left_tcp_pose_in_chest, self.observation_right_tcp_pose_in_chest]
-            target_velocities = [None, None]
-            if arm_velocity_target is None:
-                arm_velocity_target = [[0.0] * 6 for _ in range(2)]
-            for i in range(2):
-                last_control_error = self.last_control_error[i]
-                self.last_control_pose[i] = self.last_control_pose[i] * (1 - self.control_pose_feedback_new_data_rate) + \
-                    np.array(curent_tcp_poses[i]) * self.control_pose_feedback_new_data_rate
-                translation_error = (np.array(arm_target[i][:3]) - np.array(self.last_control_pose[i][:3]))
-                rotation_error = self.calculate_delta_rotation(Rotation.from_quat(self.norm_quaternions(self.last_control_pose[i][3:])),
-                                                               Rotation.from_quat(self.norm_quaternions(arm_target[i][3:]))).as_rotvec()
-                translation_speed_target = translation_error * 60 * 0.2 + (translation_error - last_control_error[0]) * 60 * 0.0
-                rotation_speed_target = rotation_error * 60 * 0.15 + (rotation_error - last_control_error[1]) * 60 * 0.1
-                if np.linalg.norm(translation_speed_target) > 0.25:
-                    translation_speed_target = translation_speed_target / np.linalg.norm(translation_speed_target) * 0.25
-                translation_speed_target += np.array(arm_velocity_target[i][:3])
-                if np.linalg.norm(rotation_speed_target) > np.pi / 6:
-                    rotation_speed_target = rotation_speed_target / np.linalg.norm(rotation_speed_target) * np.pi / 6
-                rotation_speed_target += np.array(arm_velocity_target[i][3:6])
-                target_tcp = Float32MultiArray()
-                target_tcp.data = translation_speed_target.tolist() + rotation_speed_target.tolist()
-                self.target_tcp_publisher[i].publish(target_tcp)
-                pose_error = Float32MultiArray()
-                pose_error.data = translation_error.tolist() + rotation_error.tolist()
-                self.pose_control_error_publisher[i].publish(pose_error)
-                self.last_control_error[i] = [translation_error, rotation_error]
-                target_velocities[i] = target_tcp.data
+            if MOVE_USE_SERVOL:
+                msg = servoL()
+                msg.dt = 1 / 60
+                msg.leftArmValid = False
+                msg.rightArmValid = arm_target_valid
+                msg.leftArmTargetPos.x = self.observation_left_tcp_pose_in_chest[0]
+                msg.leftArmTargetPos.y = self.observation_left_tcp_pose_in_chest[1]
+                msg.leftArmTargetPos.z = self.observation_left_tcp_pose_in_chest[2]
+                msg.leftArmTargetQuat.x = self.observation_left_tcp_pose_in_chest[3]
+                msg.leftArmTargetQuat.y = self.observation_left_tcp_pose_in_chest[4]
+                msg.leftArmTargetQuat.z = self.observation_left_tcp_pose_in_chest[5]
+                msg.leftArmTargetQuat.z = self.observation_left_tcp_pose_in_chest[6]
+                msg.rightArmTargetPos.x = self.observation_left_tcp_pose_in_chest[0]
+                msg.rightArmTargetPos.y = self.observation_right_tcp_pose_in_chest[1]
+                msg.rightArmTargetPos.z = self.observation_right_tcp_pose_in_chest[2]
+                msg.rightArmTargetQuat.x = self.observation_right_tcp_pose_in_chest[3]
+                msg.rightArmTargetQuat.y = self.observation_right_tcp_pose_in_chest[4]
+                msg.rightArmTargetQuat.z = self.observation_right_tcp_pose_in_chest[5]
+                msg.rightArmTargetQuat.z = self.observation_right_tcp_pose_in_chest[6]
+                self.target_tcp_publisher.publish(msg)
+            else:
+                curent_tcp_poses = [self.observation_left_tcp_pose_in_chest, self.observation_right_tcp_pose_in_chest]
+                target_velocities = [None, None]
+                if arm_velocity_target is None:
+                    arm_velocity_target = [[0.0] * 6 for _ in range(2)]
+                for i in range(2):
+                    last_control_error = self.last_control_error[i]
+                    self.last_control_pose[i] = self.last_control_pose[i] * (1 - self.control_pose_feedback_new_data_rate) + \
+                        np.array(curent_tcp_poses[i]) * self.control_pose_feedback_new_data_rate
+                    translation_error = (np.array(arm_target[i][:3]) - np.array(self.last_control_pose[i][:3]))
+                    rotation_error = self.calculate_delta_rotation(Rotation.from_quat(self.norm_quaternions(self.last_control_pose[i][3:])),
+                                                                Rotation.from_quat(self.norm_quaternions(arm_target[i][3:]))).as_rotvec()
+                    translation_speed_target = translation_error * 60 * 0.2 + (translation_error - last_control_error[0]) * 60 * 0.0
+                    rotation_speed_target = rotation_error * 60 * 0.15 + (rotation_error - last_control_error[1]) * 60 * 0.1
+                    if np.linalg.norm(translation_speed_target) > 0.25:
+                        translation_speed_target = translation_speed_target / np.linalg.norm(translation_speed_target) * 0.25
+                    translation_speed_target += np.array(arm_velocity_target[i][:3])
+                    if np.linalg.norm(rotation_speed_target) > np.pi / 6:
+                        rotation_speed_target = rotation_speed_target / np.linalg.norm(rotation_speed_target) * np.pi / 6
+                    rotation_speed_target += np.array(arm_velocity_target[i][3:6])
+                    target_tcp = Float32MultiArray()
+                    target_tcp.data = translation_speed_target.tolist() + rotation_speed_target.tolist()
+                    self.target_tcp_publisher[i].publish(target_tcp)
+                    pose_error = Float32MultiArray()
+                    pose_error.data = translation_error.tolist() + rotation_error.tolist()
+                    self.pose_control_error_publisher[i].publish(pose_error)
+                    self.last_control_error[i] = [translation_error, rotation_error]
+                    target_velocities[i] = target_tcp.data
             if hasattr(self, "record_data"):
                 self.record_data.record_control_command(time.time(), target_velocities[0],
                                                         hand_target[0], target_velocities[1],

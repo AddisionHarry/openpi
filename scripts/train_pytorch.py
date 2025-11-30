@@ -523,7 +523,20 @@ def train_loop(config: _config.TrainConfig):
         else None
     )
 
+    nan_counter = 0
+    max_nan_retries = 5
+    nan_detected = False
+
     while global_step < config.num_train_steps:
+        if nan_detected:
+            nan_counter += 1
+            if nan_counter >= max_nan_retries:
+                raise RuntimeError(f"Exceeded maximum NaN retries ({max_nan_retries}), aborting training.")
+            logging.info(f"Retrying training loop after NaN detection (retry {nan_counter}/{max_nan_retries})")
+            nan_detected = False
+        else:
+            nan_counter = 0 if (nan_counter <= 1) else (nan_counter - 1)
+
         # Set epoch for distributed training
         if use_ddp and hasattr(loader, "set_epoch"):
             loader.set_epoch(global_step // len(loader))
@@ -559,6 +572,9 @@ def train_loop(config: _config.TrainConfig):
                 "action_mean": float(actions.mean().detach().cpu().numpy()),
                 "action_std": float(actions.std().detach().cpu().numpy()),
             }):
+                # raise RuntimeError("NaN loss detected, training aborted.")
+                print(("NaN loss detected, training aborted."))
+                exit(0)
                 print("Dumping last batch tensors for inspection...")
                 torch.save({
                     "observation": observation,
@@ -566,7 +582,14 @@ def train_loop(config: _config.TrainConfig):
                     "loss": loss,
                     "step": global_step,
                 }, f"nan_debug_step_{global_step}.pt")
-                raise RuntimeError("NaN loss detected, training aborted.")
+                nan_detected = True
+                # Clear gradients
+                optim.zero_grad(set_to_none=True)
+                for param in model.parameters():
+                    if param.grad is not None:
+                        param.grad.detach_()
+                        param.grad = None
+                continue  # Skip backward pass and optimizer step
 
             # Backward pass
             loss.backward()
@@ -579,13 +602,23 @@ def train_loop(config: _config.TrainConfig):
                         "grad_norm": float(param.grad.norm().detach().cpu()) if param.grad.numel() > 0 else 0.0,
                     }):
                         print(f"NaN detected in gradient: {name}")
+                        # raise RuntimeError("NaN grad detected, training aborted.")
+                        print("NaN grad detected, training aborted.")
+                        exit(0)
                         torch.save({
                             "step": global_step,
                             "param_name": name,
                             "grad": param.grad.detach().cpu(),
                             "param": param.detach().cpu(),
                         }, f"nan_grad_debug_step_{global_step}_{name.replace('.', '_')}.pt")
-                        raise RuntimeError("NaN grad detected, training aborted.")
+                        nan_detected = True
+                        # Clear gradients
+                        optim.zero_grad(set_to_none=True)
+                        for param in model.parameters():
+                            if param.grad is not None:
+                                param.grad.detach_()
+                                param.grad = None
+                        continue  # Skip further gradient checks
 
             # Log memory usage after backward pass
             if global_step < 5 and is_main and torch.cuda.is_available():
@@ -599,12 +632,22 @@ def train_loop(config: _config.TrainConfig):
                 print(f"[NaN/Inf GRAD NORM DETECTED] at step {global_step}")
                 print(f"grad_norm = {grad_norm}")
                 print("=" * 100)
+                # raise RuntimeError("NaN grad detected, training aborted.")
+                print("NaN grad detected, training aborted.")
+                exit(0)
                 torch.save({
                     "step": global_step,
                     "grad_norm": grad_norm,
                     "model_state": model.state_dict(),
                 }, f"nan_gradnorm_debug_step_{global_step}.pt")
-                raise RuntimeError("NaN grad detected, training aborted.")
+                nan_detected = True
+                # Clear gradients
+                optim.zero_grad(set_to_none=True)
+                for param in model.parameters():
+                    if param.grad is not None:
+                        param.grad.detach_()
+                        param.grad = None
+                continue  # Skip optimizer step
 
             # Optimizer step
             optim.step()
