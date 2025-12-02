@@ -1647,20 +1647,20 @@ _CONFIGS = [
         # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=2_000,
+            warmup_steps=1500,
             peak_lr=1e-4,
-            decay_steps=20_000,
+            decay_steps=15_000,
             decay_lr=1e-5,
         ),
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
-        num_train_steps=25_000,
+        num_train_steps=20_000,
         log_interval=50,
         save_interval=100,
         keep_period=20_000,
-        batch_size=256,
-        num_workers=29,
-        # num_workers=16,
+        batch_size=8,
+        # num_workers=29,
+        num_workers=2,
         force_offline_dataset=True,
     ),
     #

@@ -35,7 +35,12 @@ import math
 import jax
 import numpy as np
 import safetensors.torch
+
+import multiprocessing as mp
+mp.set_start_method("spawn", force=True)
+
 import torch
+torch.multiprocessing.set_sharing_strategy('file_system')
 import torch.distributed as dist
 import torch.nn.parallel
 import torch.nn.functional as F
@@ -324,6 +329,7 @@ def check_for_nan(tensor, name, step, extra_info=None):
 
 
 def train_loop(config: _config.TrainConfig):
+    # torch.autograd.set_detect_anomaly(True)
     use_ddp, local_rank, device = setup_ddp()
     is_main = (not use_ddp) or (dist.get_rank() == 0)
     set_seed(config.seed, local_rank)

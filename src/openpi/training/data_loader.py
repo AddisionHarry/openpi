@@ -451,7 +451,7 @@ class TorchDataLoader:
             sampler=sampler,
             num_workers=num_workers,
             multiprocessing_context=mp_context,
-            prefetch_factor=8,
+            prefetch_factor = None if num_workers == 0 else 4,
             persistent_workers=num_workers > 0,
             collate_fn=_collate_fn,
             pin_memory=True,
