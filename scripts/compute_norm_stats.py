@@ -90,6 +90,10 @@ def main(config_name: str, max_frames: int | None = None):
     config = _config.get_config(config_name)
     data_config = config.data.create(config.assets_dirs, config.model)
 
+    # output_path = config.assets_dirs
+    # print(f"Writing stats to: {output_path}")
+    # exit(0)
+
     if data_config.rlds_data_dir is not None:
         data_loader, num_batches = create_rlds_dataloader(
             data_config, config.model.action_horizon, config.batch_size, max_frames
@@ -115,7 +119,8 @@ def main(config_name: str, max_frames: int | None = None):
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
+    # output_path = config.assets_dirs / data_config.repo_id
+    output_path = config.assets_dirs
     print(f"Writing stats to: {output_path}")
     normalize.save(output_path, norm_stats)
 

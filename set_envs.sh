@@ -18,5 +18,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.7
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 
+export UV_PYTHON=/root/miniforge/bin/python3
+
 echo "HuggingFace and LeRobot environment variables set."
 

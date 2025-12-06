@@ -390,7 +390,7 @@ class DiffusionInferenceNode:
             for i, action in enumerate(actions):
                 act_arr = np.asarray(action, dtype=np.float32)
                 new_action.append({
-                    "timestamp": float(response["timestamp"]) + float(i + 1) * (1 / self.args.chunk_fps) * 3,
+                    "timestamp": float(response["timestamp"]) + float(i + 1) * (1 / self.args.chunk_fps),
                     "values": act_arr
                 })
             with self.action_lock:

@@ -2,57 +2,86 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/set_envs.sh"
 
+TASK="$1"
+if [ -z "$TASK" ]; then
+    echo "[Error]Must give task index."
+    exit 1
+fi
+
 # CUDA_VISIBLE_DEVICES=0,1 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting
 # cp /root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128/norm_stats.json \
 #     /root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128/industrial_sorting/
 # mv /root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128/norm_stats.json \
-#     /root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128/norm_stats_jointswithwaist_backup_20251128.json
+#     /root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128/norm_stats_jointswithwaist_backup_20251204.json
 
-# export OMP_NUM_THREADS=1
-# export MKL_NUM_THREADS=1
-# export OPENBLAS_NUM_THREADS=1
-# export NUMEXPR_NUM_THREADS=1
-
-# export NCCL_DEBUG=INFO
-# export NCCL_DEBUG_SUBSYS=ALL
-# export NCCL_IB_DISABLE=1        # 禁用 InfiniBand，优先 NVLink / socket
-# export NCCL_P2P_DISABLE=0      # 尝试启用 P2P（NVLink）
-
-# export NCCL_DEBUG=INFO
-# export NCCL_DEBUG_SUBSYS=ALL
-# export NCCL_IB_DISABLE=1
-# export NCCL_P2P_DISABLE=1
-# export NCCL_SOCKET_IFNAME=lo   # 使用回环接口，单机多卡安全但速度可能慢
-# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-
-# export NCCL_DEBUG=INFO
-# export NCCL_DEBUG_SUBSYS=ALL
-# export TORCH_SHOW_CPP_STACKTRACES=1
-# export CUDA_LAUNCH_BLOCKING=1
-# # 禁用 IB（否则会卡死很久）
-# export NCCL_IB_DISABLE=1
-# # 强制使用 NVLink（你的 GPU0/1/2 之间是 NV8）
-# export NCCL_P2P_DISABLE=0
-# # 增强 NCCL 超时，避免误杀
-# export NCCL_ASYNC_ERROR_HANDLING=1
-# export PYTHONFAULTHANDLER=1
-# export NCCL_DEBUG_FILE=/tmp/nccl_rank_%r.log
-
-export NCCL_P2P_DISABLE=1
-export NCCL_IB_DISABLE=1
-export NCCL_SHM_DISABLE=1
-export NCCL_NET_GDR_LEVEL=0
-export NCCL_DEBUG=INFO
-export NCCL_DEBUG_SUBSYS=ALL
-
-CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True DEBUG_MODE=0 \
-    uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
-    scripts/train_pytorch.py pi05_zjhumanoid_industrial_sorting \
-    --exp_name industrial_sorting_joint_space
+# CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True DEBUG_MODE=0 \
+#     uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+#     scripts/train_pytorch.py pi05_zjhumanoid_industrial_sorting \
+#     --exp_name industrial_sorting_joint_space
 # CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True DEBUG_MODE=1 \
 #     uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
 #     scripts/train_pytorch.py pi05_zjhumanoid_industrial_sorting \
 #     --exp_name industrial_sorting_joint_space  --resume
+# CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True DEBUG_MODE=0 \
+#     uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+#     scripts/train_pytorch.py pi05_zjhumanoid_industrial_sorting \
+#     --exp_name industrial_sorting_joint_space_right_arm
+
+if [ "$TASK" == "0" ]; then
+    # CUDA_VISIBLE_DEVICES=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_jax
+    # CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_industrial_sorting_jax --exp-name=industrial_sorting_joint_space_right_arm_jax --overwrite
+
+    CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+        pi05_zjhumanoid_industrial_sorting_jax --exp-name=industrial_sorting_joint_space_right_arm_jax --resume
+
+elif [ "$TASK" == "1" ]; then
+    # uv run python3 -c "import time; from tqdm import tqdm; total=2*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
+
+    CUDA_VISIBLE_DEVICES=1 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_tcp_raw_jax && \
+    CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+        pi05_zjhumanoid_industrial_sorting_tcp_raw_jax --exp-name=industrial_sorting_ee_pose_raw_right_arm_jax --overwrite
+
+    # CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_industrial_sorting_tcp_raw_jax --exp-name=industrial_sorting_ee_pose_raw_right_arm_jax --resume
+
+elif [ "$TASK" == "2" ]; then
+    # uv run python3 -c "import time; from tqdm import tqdm; total=14*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();" && \
+
+    # CUDA_VISIBLE_DEVICES=2 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax && \
+    CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+        pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax --exp-name=industrial_sorting_ee_pose_chest_right_arm_jax --overwrite
+
+    # CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax --exp-name=industrial_sorting_ee_pose_chest_right_arm_jax --resume
+
+elif [ "$TASK" == "3" ]; then
+    # uv run python3 -c "import time; from tqdm import tqdm; total=16*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();" && \
+
+    CUDA_VISIBLE_DEVICES=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax && \
+    CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+        pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax --exp-name=industrial_sorting_ee_pose_wrist_right_arm_jax --overwrite
+
+    # CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax --exp-name=industrial_sorting_ee_pose_chest_right_arm_jax --resume
+
+elif [ "$TASK" == "4" ]; then
+    uv run python3 -c "import time; from tqdm import tqdm; total=4*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
+
+    CUDA_VISIBLE_DEVICES=1 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_cloth_joint_space && \
+    CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+        pi05_zjhumanoid_cloth_joint_space --exp-name=cloth_joint --overwrite
+
+    # CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_cloth_joint_space --exp-name=cloth_joint --resume
+
+elif [ "$TASK" == "5" ]; then
+    echo "No task 5."
+
+elif [ "$TASK" == "6" ]; then
+    echo "No task 6."
+
+fi
 
 # ITER=0
 # while true; do
@@ -66,7 +95,8 @@ CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True DEBUG_
 #     CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True DEBUG_MODE=0 \
 #         uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
 #         scripts/train_pytorch.py pi05_zjhumanoid_industrial_sorting \
-#         --exp_name industrial_sorting_joint_space --resume
+#         --exp_name industrial_sorting_joint_space_right_arm --resume
+#     # ps -ef | grep python | grep openpi | awk '{print $2}' | xargs -r kill -9
 
 #     echo ""
 #     date

@@ -19,12 +19,12 @@ CHECKS = [
     (
         "Check Task Index",
         check_list.check_add_task_index_func,
-        lambda dataset_dir, fix: (dataset_dir, fix, 0)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), fix, 0)
     ),
     (
         "Compute Episode Stats",
         check_list.check_compute_episodes_stats_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta")), fix)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta")), False)
     ),
     (
         "Delete Depth Info",
@@ -32,9 +32,14 @@ CHECKS = [
         lambda dataset_dir, fix: (os.path.join(dataset_dir, "meta", "info.json"), fix)
     ),
     (
+        "Delete Depth min/max json statistics",
+        check_list.check_delete_depth_jsondata_func,
+        lambda dataset_dir, fix: (os.path.join(dataset_dir, "meta", "episodes_stats.jsonl"), fix)
+    ),
+    (
         "Check Parquet Action Name",
         check_list.check_parquet_action_name_actions_func,
-        lambda dataset_dir, fix: (dataset_dir,)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")),)
     ),
     (
         "Check Parquet Episode Index",
@@ -65,11 +70,11 @@ def main(dataset_dir: str, fix: bool = False):
             tqdm.write(f"[ERROR] {check_name} failed: {e}")
             results[check_name] = False
 
-    tqdm.write("\n========== CHECK SUMMARY ==========")
+    tqdm.write("\n================= CHECK SUMMARY =================")
     for name, passed in results.items():
         status = "PASSED " if passed else "FAILED "
-        tqdm.write(f"{name:30s} : {status}")
-    tqdm.write("==================================\n")
+        tqdm.write(f"{name:40s} : {status}")
+    tqdm.write("=================================================\n")
 
 
 if __name__ == "__main__":
