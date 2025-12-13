@@ -2,6 +2,7 @@
 import dataclasses
 
 import einops
+import torch
 import numpy as np
 
 from typing import List
@@ -53,6 +54,9 @@ def make_zj_humanoid_example(
 
 
 def _parse_image(image, flip: bool = False) -> np.ndarray:
+    if isinstance(image, torch.Tensor):
+        image = image.cpu()
+        image = image.numpy()
     image = np.asarray(image)
     if np.issubdtype(image.dtype, np.floating):
         image = (255 * image).astype(np.uint8)

@@ -277,4 +277,11 @@ def main(config: _config.TrainConfig):
 
 
 if __name__ == "__main__":
+    import os
+    if os.environ.get("DEBUG_MODE", "0") == "1":
+        import debugpy
+        debugpy.listen(("0.0.0.0", 5678))
+        print("Waiting for VS Code debugger to attach on port 5678...")
+        debugpy.wait_for_client()
+        print("Debugger attached, resuming execution...")
     main(_config.cli())

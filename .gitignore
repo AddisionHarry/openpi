@@ -169,3 +169,5 @@ cython_debug/
 
 huggingface_root
 checkpoints
+.VSCodeCounter
+data_domain

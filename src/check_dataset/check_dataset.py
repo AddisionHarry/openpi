@@ -39,7 +39,22 @@ CHECKS = [
     (
         "Check Parquet Action Name",
         check_list.check_parquet_action_name_actions_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")),)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta", "info.json")), fix)
+    ),
+    (
+        "Check Parquet Index Global Continuity",
+        check_list.check_parquet_global_index_continuity_func,
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), fix)
+    ),
+    (
+        "Check Parquet Episode Length",
+        check_list.check_episode_length_func,
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta", "episodes.jsonl")), fix)
+    ),
+    (
+        "Check Info Consistency",
+        check_list.check_dataset_info_consistency_func,
+        lambda dataset_dir, fix: (str(dataset_dir), fix)
     ),
     (
         "Check Parquet Episode Index",

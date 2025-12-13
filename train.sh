@@ -28,12 +28,12 @@ fi
 #     --exp_name industrial_sorting_joint_space_right_arm
 
 if [ "$TASK" == "0" ]; then
-    # CUDA_VISIBLE_DEVICES=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_jax
-    # CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
-    #     pi05_zjhumanoid_industrial_sorting_jax --exp-name=industrial_sorting_joint_space_right_arm_jax --overwrite
+    # CUDA_VISIBLE_DEVICES=0,1 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_jax
+    CUDA_VISIBLE_DEVICES=0,1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+        pi05_zjhumanoid_industrial_sorting_jax --exp-name=industrial_sorting_joint_space_right_arm_jax --overwrite
 
-    CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
-        pi05_zjhumanoid_industrial_sorting_jax --exp-name=industrial_sorting_joint_space_right_arm_jax --resume
+    # CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_industrial_sorting_jax --exp-name=industrial_sorting_joint_space_right_arm_jax --resume
 
 elif [ "$TASK" == "1" ]; then
     # uv run python3 -c "import time; from tqdm import tqdm; total=2*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
@@ -46,7 +46,7 @@ elif [ "$TASK" == "1" ]; then
     #     pi05_zjhumanoid_industrial_sorting_tcp_raw_jax --exp-name=industrial_sorting_ee_pose_raw_right_arm_jax --resume
 
 elif [ "$TASK" == "2" ]; then
-    # uv run python3 -c "import time; from tqdm import tqdm; total=14*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();" && \
+    # uv run python3 -c "import time; from tqdm import tqdm; total=14*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
 
     # CUDA_VISIBLE_DEVICES=2 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax && \
     CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
@@ -56,7 +56,7 @@ elif [ "$TASK" == "2" ]; then
     #     pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax --exp-name=industrial_sorting_ee_pose_chest_right_arm_jax --resume
 
 elif [ "$TASK" == "3" ]; then
-    # uv run python3 -c "import time; from tqdm import tqdm; total=16*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();" && \
+    # uv run python3 -c "import time; from tqdm import tqdm; total=16*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
 
     CUDA_VISIBLE_DEVICES=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax && \
     CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
@@ -66,9 +66,9 @@ elif [ "$TASK" == "3" ]; then
     #     pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax --exp-name=industrial_sorting_ee_pose_chest_right_arm_jax --resume
 
 elif [ "$TASK" == "4" ]; then
-    uv run python3 -c "import time; from tqdm import tqdm; total=4*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
+    # uv run python3 -c "import time; from tqdm import tqdm; total=4*3600; pbar=tqdm(total=total, desc='Remaining Sleep Time', unit='seconds', ncols=100); [time.sleep(1) or pbar.update(1) for _ in range(total)]; pbar.close();"
 
-    CUDA_VISIBLE_DEVICES=1 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_cloth_joint_space && \
+    # CUDA_VISIBLE_DEVICES=1 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_cloth_joint_space && \
     CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
         pi05_zjhumanoid_cloth_joint_space --exp-name=cloth_joint --overwrite
 
@@ -76,10 +76,20 @@ elif [ "$TASK" == "4" ]; then
     #     pi05_zjhumanoid_cloth_joint_space --exp-name=cloth_joint --resume
 
 elif [ "$TASK" == "5" ]; then
-    echo "No task 5."
+    # CUDA_VISIBLE_DEVICES=2 uv run python3 scripts/compute_norm_stats.py --config-name pi05_zjhumanoid_cloth_absolute_tcp_pose && \
+    CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+        pi05_zjhumanoid_cloth_absolute_tcp_pose --exp-name=cloth_absolute_tcp_pose --overwrite
+
+    # CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    #     pi05_zjhumanoid_cloth_absolute_tcp_pose --exp-name=cloth_absolute_tcp_pose --resume
 
 elif [ "$TASK" == "6" ]; then
-    echo "No task 6."
+    # CUDA_VISIBLE_DEVICES=1,2 uv run python3 scripts/compute_norm_stats.py --config-name pi0_zjhumanoid_industrial_sorting_jax && \
+    # CUDA_VISIBLE_DEVICES=1,2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_zjhumanoid_industrial_sorting_jax --exp-name=pi0_industrial_sorting_cleaned_waist_action --overwrite
+
+    CUDA_VISIBLE_DEVICES=1,2 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+        pi0_zjhumanoid_industrial_sorting_jax --exp-name=pi0_industrial_sorting_cleaned_waist_action --resume
 
 fi
 

@@ -16,12 +16,7 @@ import os
 import json
 from typing import Dict, List
 from tqdm import tqdm
-
-# Dependency: ffmpeg-python
-try:
-    import ffmpeg
-except ImportError:
-    raise ImportError("Please install dependency first: pip install ffmpeg-python")
+import ffmpeg
 
 
 def get_video_actual_frames(video_path: str) -> int:

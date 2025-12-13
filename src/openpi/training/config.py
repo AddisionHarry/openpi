@@ -207,7 +207,13 @@ class DataConfigFactory(abc.ABC):
             logging.info(f"Loaded norm stats from {data_assets_dir}")
             return norm_stats
         except FileNotFoundError:
-            logging.info(f"Norm stats not found in {data_assets_dir}, skipping.")
+            try:
+                data_assets_dir = str(assets_dir)
+                norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
+                logging.info(f"Loaded norm stats from {data_assets_dir}")
+                return norm_stats
+            except FileNotFoundError:
+                logging.info(f"Norm stats not found in {data_assets_dir}, skipping.")
         return None
 
 
@@ -1615,6 +1621,57 @@ _CONFIGS = [
     ),
     TrainConfig(
         # Change the name to reflect your model and dataset.
+        name="pi05_zjhumanoid_industrial_sorting_jax",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi05_zjhumanoid_industrial_sorting_jax",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
+                asset_id="pi05_zjhumanoid_industrial_sorting_jax",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=False
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=5e-5,
+            decay_steps=15_000,
+            decay_lr=5e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=25,
+        save_interval=500,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=16,
+        force_offline_dataset=True,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
         name="pi05_zjhumanoid_industrial_sorting",
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
@@ -1666,20 +1723,20 @@ _CONFIGS = [
     ),
     TrainConfig(
         # Change the name to reflect your model and dataset.
-        name="pi05_zjhumanoid_industrial_sorting_jax",
-        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128"),
+        name="pi0_zjhumanoid_industrial_sorting_jax",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_manually_cleaned_20251210"),
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
         # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
-        model=pi0_config.Pi0Config(pi05=True),
+        model=pi0_config.Pi0Config(pi05=False),
         # Here you define the dataset you are training on. In this example we use the Libero
         # dataset. For your own dataset, you can change the repo_id to point to your dataset.
         # Also modify the DataConfig to use the new config you made for your dataset above.
         data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/industrial_sorting_cleaned_20251128",
+            repo_id="zj-humanoid/pi0_zjhumanoid_industrial_sorting_jax",
             assets=AssetsConfig(
-                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128"),
-                asset_id="industrial_sorting_joint_space_right_arm_jax",
+                assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_manually_cleaned_20251210"),
+                asset_id="pi0_zjhumanoid_industrial_sorting_jax",
             ),
             base_config=DataConfig(
                 # This flag determines whether we load the prompt (i.e. the task instruction) from the
@@ -1693,24 +1750,24 @@ _CONFIGS = [
             use_arms=[False, True],
             use_wrist_cameras=[False, True],
             obs_use_waist_angles=True,
-            action_use_waist_angles=False
+            action_use_waist_angles=True
         ),
         # Here you define which pre-trained checkpoint you want to load to initialize the model.
         # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1500,
-            peak_lr=2e-5,
+            peak_lr=5e-4,
             decay_steps=15_000,
-            decay_lr=2e-6,
+            decay_lr=1e-4,
         ),
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
-        num_train_steps=25_000,
+        num_train_steps=20_000,
         log_interval=25,
         save_interval=500,
         keep_period=20_000,
-        batch_size=32,
+        batch_size=64,
         num_workers=16,
         force_offline_dataset=True,
         # wandb_enabled=False,
@@ -1718,7 +1775,7 @@ _CONFIGS = [
     TrainConfig(
         # Change the name to reflect your model and dataset.
         name="pi05_zjhumanoid_industrial_sorting_tcp_raw_jax",
-        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251201"),
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
         # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
@@ -1727,9 +1784,9 @@ _CONFIGS = [
         # dataset. For your own dataset, you can change the repo_id to point to your dataset.
         # Also modify the DataConfig to use the new config you made for your dataset above.
         data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/industrial_sorting_cleaned_20251201_tcp_raw_jax",
+            repo_id="zj-humanoid/industrial_sorting_cleaned_20251210_tcp_raw_jax",
             assets=AssetsConfig(
-                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251201"),
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
                 asset_id="pi05_zjhumanoid_industrial_sorting_tcp_raw_jax",
             ),
             base_config=DataConfig(
@@ -1769,7 +1826,7 @@ _CONFIGS = [
     TrainConfig(
         # Change the name to reflect your model and dataset.
         name="pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax",
-        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251201"),
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
         # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
@@ -1778,9 +1835,9 @@ _CONFIGS = [
         # dataset. For your own dataset, you can change the repo_id to point to your dataset.
         # Also modify the DataConfig to use the new config you made for your dataset above.
         data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/industrial_sorting_cleaned_20251201_tcp_relative_chest_jax",
+            repo_id="zj-humanoid/industrial_sorting_cleaned_20251210_tcp_relative_chest_jax",
             assets=AssetsConfig(
-                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251201"),
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
                 asset_id="pi05_zjhumanoid_industrial_sorting_tcp_relative_chest_jax",
             ),
             base_config=DataConfig(
@@ -1820,7 +1877,7 @@ _CONFIGS = [
     TrainConfig(
         # Change the name to reflect your model and dataset.
         name="pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax",
-        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251201"),
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
         # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
@@ -1831,7 +1888,7 @@ _CONFIGS = [
         data=LeRobotZJHumanoidDataConfig(
             repo_id="zj-humanoid/pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax",
             assets=AssetsConfig(
-                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251201"),
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251210"),
                 asset_id="pi05_zjhumanoid_industrial_sorting_tcp_relative_wrist_jax",
             ),
             base_config=DataConfig(
@@ -1871,7 +1928,7 @@ _CONFIGS = [
     TrainConfig(
         # Change the name to reflect your model and dataset.
         name="pi05_zjhumanoid_cloth_joint_space",
-        assets_base_dir=pathlib.Path("/root/openpi/assets/cloths/zj-humanoid/cloths_cleaned_20251201"),
+        assets_base_dir=pathlib.Path("/root/openpi/assets/cloths/zj-humanoid"),
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
         # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
@@ -1882,7 +1939,7 @@ _CONFIGS = [
         data=LeRobotZJHumanoidDataConfig(
             repo_id="zj-humanoid/pi05_zjhumanoid_cloth_joint_space",
             assets=AssetsConfig(
-                assets_dir=pathlib.Path("/root/openpi/assets/cloths/zj-humanoid/cloths_cleaned_20251201"),
+                assets_dir=pathlib.Path("/root/openpi/assets/cloths/zj-humanoid/pi05_zjhumanoid_cloth_joint_space"),
                 asset_id="pi05_zjhumanoid_cloth_joint_space",
             ),
             base_config=DataConfig(
@@ -1905,12 +1962,63 @@ _CONFIGS = [
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1500,
             peak_lr=1e-5,
-            decay_steps=25_000,
-            decay_lr=1e-6,
+            decay_steps=30_000,
+            decay_lr=5e-7,
         ),
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
-        num_train_steps=30_000,
+        num_train_steps=35_000,
+        log_interval=25,
+        save_interval=500,
+        keep_period=20_000,
+        batch_size=16,
+        num_workers=15,
+        force_offline_dataset=True,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_zjhumanoid_cloth_absolute_tcp_pose",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/cloths/zj-humanoid"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi05_zjhumanoid_cloth_absolute_tcp_pose",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/cloths/zj-humanoid/pi05_zjhumanoid_cloth_absolute_tcp_pose"),
+                asset_id="pi05_zjhumanoid_cloth_absolute_tcp_pose",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=True,
+            use_arms=[True, True],
+            use_wrist_cameras=[True, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=False
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=1e-5,
+            decay_steps=30_000,
+            decay_lr=5e-7,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=35_000,
         log_interval=25,
         save_interval=500,
         keep_period=20_000,

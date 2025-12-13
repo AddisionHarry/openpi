@@ -79,31 +79,6 @@ def parse_pose_from_message(pose_msg: list, device: str, w_first=True) -> Tuple[
         quat = torch.tensor([pose_msg[6], pose_msg[3], pose_msg[4], pose_msg[5]], dtype=torch.float32, device=device)
     return pos.unsqueeze(0), quat.unsqueeze(0)
 
-def stack_last_n_obs_dict(all_obs: deque, n_steps: int) -> dict:
-    """
-    Stack the last n_steps of observations into a single batch dictionary.
-    Pads with the earliest observation if fewer than n_steps available.
-    """
-    assert len(all_obs) > 0
-    # all_obs = list(all_obs)
-    obs_list = list(all_obs)
-    result = {
-        key: torch.zeros(
-            list(obs_list[-1][key].shape)[0:1] + [n_steps] + list(obs_list[-1][key].shape)[1:],
-            dtype=obs_list[-1][key].dtype,
-        ).to(obs_list[-1][key].device)
-        for key in obs_list[-1]
-    }
-    start_idx = -min(n_steps, len(obs_list))
-    for key in obs_list[-1]:
-        result[key][:, start_idx:] = torch.cat([obs[key][:, None] for obs in obs_list[start_idx:]], dim=1)
-        if n_steps > len(obs_list):
-            if start_idx == -1:
-                result[key][:, :start_idx] = result[key][:, start_idx:]
-            else:
-                result[key][:, :start_idx] = result[key][:, start_idx:start_idx + 1]
-    return result
-
 # ------------------------- Argument Parsing -------------------------
 def parse_args():
     parser = argparse.ArgumentParser(description="Diffusion Policy Server for NAVIAI Humanoid")
@@ -178,7 +153,7 @@ def unparse_observation(message: Dict, device: str) -> Dict:
         "observation/left_hand_joint_position": left_hand_joints_pos,
         "observation/right_hand_joint_position": right_hand_joints_pos,
         "observation/waist_joint_position": waist_joints_pos,
-        "prompt":"do something",
+        "prompt": message["prompt"],
         "timestamp": timestamp,
     }
 

@@ -149,6 +149,9 @@ class DiffusionInferenceNode:
         parser.add_argument('--server_port', type=int, default=2857,
                         help='Server port number')
 
+        parser.add_argument('--prompt', type=str, default="do something",
+                        help='Server port number')
+
         parser.add_argument('--record_data', action='store_true', default=False,
                         help='Enable data recording')
         parser.add_argument('--no-record_data', dest='record_data', action='store_false',
@@ -266,6 +269,7 @@ class DiffusionInferenceNode:
         self.observation_images_wrist_right_rgb = cv2.cvtColor(self.image_resize(msg), cv2.COLOR_BGR2RGB)
 
     def pack_msg(self) -> str:
+        t = time.time()
         return json.dumps({
             # "head_left_rgb": self.encode_image(self.observation_images_head_left_rgb),
             # "head_right_rgb": self.encode_image(self.observation_images_head_right_rgb),
@@ -283,7 +287,8 @@ class DiffusionInferenceNode:
             "waist_angles": self.observation_joints_waist,
             "neck_angles": self.observation_joints_head,
 
-            'timestamp': time.time()
+            'timestamp': t,
+            'prompt': self.args.prompt
         })
 
     def recv_packet(self) -> dict:
