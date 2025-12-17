@@ -110,12 +110,6 @@ def main(config_name: str, max_frames: int | None = None):
     for batch in tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats"):
         for key in keys:
             stats[key].update(np.asarray(batch[key]))
-    # start_batch = 48
-    # for i, batch in enumerate(tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats")):
-    #     if i < start_batch:
-    #         continue
-    #     for key in keys:
-    #         stats[key].update(np.asarray(batch[key]))
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 

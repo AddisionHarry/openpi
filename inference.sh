@@ -30,9 +30,9 @@ if [ $TEST_DISPLAY -eq 1 ]; then
 else
     echo "[INFO] Normal inference server.py"
     CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
-        uv run python3 ${SCRIPT_DIR}/scripts/inference/server.py \
-        --model_path /root/openpi/checkpoints/pi0_zjhumanoid_industrial_sorting_jax/pi0_industrial_sorting_jax/15000 \
+        uv run python3 ${SCRIPT_DIR}/src/inference/server.py \
+        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_change_prompt/pi0_industrial_sorting_waist_action_1214data_update_prompt/19999 \
         --device cuda:0 \
-        --config_name pi0_zjhumanoid_industrial_sorting_jax \
+        --config_name pi0_industrial_sorting_joint_waist_change_prompt \
         --port 10043
 fi

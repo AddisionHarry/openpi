@@ -1,4 +1,4 @@
-from .check_add_task_index import check_add_task_index_func
+from .check_task_index_consistency import check_task_index_consistency_func
 from .check_compute_episodes_stats import check_compute_episodes_stats_func
 from .check_delete_depth_info import check_delete_depth_info_func
 from .check_lerobot_video_frames import check_lerobot_video_frames_func

@@ -1,3 +1,4 @@
+import time
 import dataclasses
 import functools
 import logging
@@ -201,6 +202,7 @@ def main(config: _config.TrainConfig):
         )
 
     jax.config.update("jax_compilation_cache_dir", str(epath.Path("~/.cache/jax").expanduser()))
+    lr_fn = config.lr_schedule.create()
 
     rng = jax.random.key(config.seed)
     train_rng, init_rng = jax.random.split(rng)
@@ -248,6 +250,8 @@ def main(config: _config.TrainConfig):
     )
 
     start_step = int(train_state.step)
+    last_log_step = start_step
+    last_log_time = time.perf_counter()
     pbar = tqdm.tqdm(
         range(start_step, config.num_train_steps),
         initial=start_step,
@@ -260,12 +264,33 @@ def main(config: _config.TrainConfig):
         with sharding.set_mesh(mesh):
             train_state, info = ptrain_step(train_rng, train_state, batch)
         infos.append(info)
+        pbar.set_postfix(loss=f"{info['loss']:.4f}")
         if step % config.log_interval == 0:
+            jax.block_until_ready(train_state)
+
             stacked_infos = common_utils.stack_forest(infos)
             reduced_info = jax.device_get(jax.tree.map(jnp.mean, stacked_infos))
+
+            now = time.perf_counter()
+            log_dict = dict(reduced_info)
+            if step != start_step:
+                steps_since_last = step - last_log_step
+                time_per_step = (now - last_log_time) / max(1, steps_since_last)
+                log_dict["time_per_step"] = time_per_step
+            else:
+                time_per_step = None
+            last_log_time = now
+            last_log_step = step
+
+            lr = float(lr_fn(step))
+            log_dict["learning_rate"] = lr
             info_str = ", ".join(f"{k}={v:.4f}" for k, v in reduced_info.items())
-            pbar.write(f"Step {step}: {info_str}")
-            wandb.log(reduced_info, step=step)
+            if time_per_step is not None:
+                pbar.write(f"Step {step}: {info_str}, lr={lr:.3e}, time/step={time_per_step:.3f} s")
+            else:
+                pbar.write(f"Step {step}: {info_str}, lr={lr:.3e}")
+
+            wandb.log(log_dict, step=step)
             infos = []
         batch = next(data_iter)
 

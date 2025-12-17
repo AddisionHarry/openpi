@@ -18,8 +18,8 @@ import check_list
 CHECKS = [
     (
         "Check Task Index",
-        check_list.check_add_task_index_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), fix, 0)
+        check_list.check_task_index_consistency_func,
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta")), fix)
     ),
     (
         "Compute Episode Stats",

@@ -20,6 +20,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+from tqdm import tqdm
 
 def parse_args():
     def parse_int_list(value: str):
@@ -56,7 +57,9 @@ def write_jsonl(path: Path, records):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 def remove_episode_files(data_dir: Path, video_dir: Path, remove_set):
-    for idx in remove_set:
+    print("Step 1/5: Removing episode files (parquet + mp4)...")
+    remove_list = sorted(remove_set)
+    for idx in tqdm(remove_list, desc="Deleting files", total=len(remove_list)):
         name = f"episode_{idx:06d}"
         parquet = data_dir / f"{name}.parquet"
         if parquet.exists():
@@ -66,8 +69,10 @@ def remove_episode_files(data_dir: Path, video_dir: Path, remove_set):
                 mp4 = cam_dir / f"{name}.mp4"
                 if mp4.exists():
                     mp4.unlink()
+    print("Step 1/5: Episode files removed successfully\n")
 
 def update_episode_metadata(meta_dir: Path, remove_set):
+    print("Step 2/5: Updating episode metadata (episodes.jsonl + episodes_stats.jsonl)...")
     def reindex_by_episode_index(records, remove_set):
         """
         Filter records by remove_set, sort by episode_index,
@@ -95,6 +100,7 @@ def update_episode_metadata(meta_dir: Path, remove_set):
         s["episode_index"] = old_to_new[s["episode_index"]]
     write_jsonl(episodes_jsonl, episodes)
     write_jsonl(stats_jsonl, stats)
+    print(f"Step 2/5: Metadata updated (remaining episodes: {len(episodes)})\n")
     return old_to_new, episodes
 
 def backup_and_recreate_dir(dir_path: Path) -> Path:
@@ -109,6 +115,7 @@ def backup_and_recreate_dir(dir_path: Path) -> Path:
         raise FileNotFoundError(f"{dir_path} does not exist")
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     backup_dir = dir_path.parent / f"{dir_path.name}_bak_{ts}"
+    print(f"Backing up {dir_path} to {backup_dir}...")
     dir_path.rename(backup_dir)
     dir_path.mkdir(parents=True, exist_ok=False)
     return backup_dir
@@ -124,10 +131,13 @@ def update_parquet_files(
     - globally continuous index
     - directory-level backup to avoid name collisions
     """
+    print("Step 3/5: Backing up original data and video directories...")
     data_bak = backup_and_recreate_dir(data_dir)
     video_bak = backup_and_recreate_dir(video_dir)
+    print("Step 3/5: Directories backed up successfully\n")
 
     # Rewrite parquet files
+    print("Step 4/5: Rewriting parquet files with updated indices...")
     global_index = 0
     for old_idx, new_idx in sorted(old_to_new.items(), key=lambda x: x[1]):
         old_name = f"episode_{old_idx:06d}"
@@ -148,6 +158,7 @@ def update_parquet_files(
         df.to_parquet(dst_parquet, index=False)
 
     # Rewrite video files
+    print("Step 4/5: Copying video files with new indices...")
     if video_bak is not None:
         for cam_dir in video_bak.iterdir():
             if not cam_dir.is_dir():
@@ -164,6 +175,7 @@ def update_parquet_files(
     return global_index
 
 def update_info_json(meta_dir: Path, episodes, total_frames):
+    print("Step 5/5: Updating meta/info.json...")
     info_json = meta_dir / "info.json"
     with open(info_json, "r") as f:
         info = json.load(f)
@@ -174,6 +186,7 @@ def update_info_json(meta_dir: Path, episodes, total_frames):
     info["splits"]["train"] = f"0:{total_episodes}"
     with open(info_json, "w") as f:
         json.dump(info, f, indent=2, ensure_ascii=False)
+    print("Step 5/5: info.json updated successfully\n")
 
 def main():
     args = parse_args()

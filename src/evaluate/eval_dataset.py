@@ -8,18 +8,19 @@ Description:
     (--episode-index) or batch evaluation of all episodes (--episode-all).
 
 Usage Example:
-    DEBUG_MODE=0 CUDA_VISIBLE_DEVICES=0 uv run python3 test_eval_dataset.py \
-        --dataset-dir /path/to/dataset \
+    DEBUG_MODE=0 CUDA_VISIBLE_DEVICES=0 uv run python3 eval_dataset.py \
+        --dataset-dir <path/to/dataset> \
         --episode-index 0 \
-        --model-path /path/to/checkpoint \
+        --model-path <path/to/checkpoint> \
         --config-name my_config \
-        --output-path output.h5 \
+        --output-path <path/to/output.h5> \
         --device cuda:0 \
         --use-arms "[False, True]" --use-waist-angles False --use-tcp-pose False
 """
 
 import argparse
 import ast
+import json
 from tqdm import tqdm
 from pathlib import Path
 import numpy as np
@@ -118,7 +119,7 @@ class EpisodeDataIterator:
         return video_paths
 
     def _cache_all_video_frames(self):
-        tqdm.write("[Info] Caching all video frames into memory...")
+        # tqdm.write("[Info] Caching all video frames into memory...")
         for cam_name, path in self.video_paths.items():
             cap = cv2.VideoCapture(path)
             frames = []
@@ -131,7 +132,7 @@ class EpisodeDataIterator:
                 frames.append(frame)
             cap.release()
             self.video_frames[cam_name] = frames
-            tqdm.write(f"[Info] Cached {len(frames)} frames for camera {cam_name}")
+            # tqdm.write(f"[Info] Cached {len(frames)} frames for camera {cam_name}")
 
     def _get_video_frame(self, cam_name: str, step: int) -> np.ndarray:
         if self.cache_videos:
@@ -238,6 +239,42 @@ def pack_real_action(action: np.ndarray, use_arms: tuple[bool, bool], use_waist_
         segments.append(slice_axis(action, s, e, axis))
     return np.concatenate(segments, axis=axis).astype(np.float32)
 
+def load_action_names_from_meta(dataset_dir: str) -> list[str]:
+    meta_path = Path(dataset_dir) / "meta" / "info.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"Meta info.json not found: {meta_path}")
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+    return meta["features"]["actions"]["names"]
+
+def pack_action_joint_names(
+    action_names: list[str],
+    use_arms: tuple[bool, bool],
+    use_waist_angles: bool,
+    use_tcp_pose: bool,
+) -> list[str]:
+    def slice_names(names, start, end):
+        return names[start:end]
+    segments = []
+    if use_arms[0]:
+        seg = "left_arm_tcp" if use_tcp_pose else "left_arm_joint"
+        s, e = ACTION_IDX[seg]
+        segments.extend(slice_names(action_names, s, e))
+        s, e = ACTION_IDX["left_hand"]
+        segments.extend(slice_names(action_names, s, e))
+    if use_arms[1]:
+        seg = "right_arm_tcp" if use_tcp_pose else "right_arm_joint"
+        s, e = ACTION_IDX[seg]
+        segments.extend(slice_names(action_names, s, e))
+        s, e = ACTION_IDX["right_hand"]
+        segments.extend(slice_names(action_names, s, e))
+    if not use_arms[0] and not use_arms[1]:
+        raise ValueError("At least one arm must be used.")
+    if use_waist_angles:
+        s, e = ACTION_IDX["waist"]
+        segments.extend(slice_names(action_names, s, e))
+    return segments
+
 def compute_stepwise_action_mse(all_pred_actions: np.ndarray, all_gt_actions: np.ndarray, chunk_length: int) -> np.ndarray:
     episode_len = all_gt_actions.shape[0]
     mse_per_step = np.zeros(episode_len, dtype=np.float32)
@@ -260,6 +297,12 @@ def main():
     else:
         all_episode_indices = [args.episode_index]
 
+    all_action_names = load_action_names_from_meta(args.dataset_dir)
+    joint_names = pack_action_joint_names(
+        all_action_names, args.use_arms, args.use_waist_angles, args.use_tcp_pose)
+
+    pack_action = lambda x: pack_real_action(x, args.use_arms, args.use_waist_angles, args.use_tcp_pose)
+
     # Load model
     cfg = config.get_config(args.config_name)
     policy = policy_config.create_trained_policy(cfg, args.model_path)
@@ -272,8 +315,14 @@ def main():
             episode_len = len(ep_iterator)
             grp = h5_file.create_group(f"episode_{ep_idx:06d}")
             steps_ds = grp.create_dataset('step', shape=(episode_len,), dtype=np.int32)
+            str_dt = h5py.string_dtype(encoding="utf-8")
+            grp.create_dataset(
+                "action_joint_names",
+                data=np.array(joint_names, dtype=object),
+                dtype=str_dt,
+            )
             first_data = next(iter(ep_iterator))
-            state_dim = len(first_data['observation.state'])
+            state_dim = len(pack_action(first_data['observation.state']))
             states_ds = grp.create_dataset('state', shape=(episode_len, state_dim), dtype=np.float32)
             first_obs = unparse_observation(first_data, args.device, args.prompt)
             with torch.inference_mode():
@@ -283,11 +332,11 @@ def main():
                 first_action = first_action.cpu().numpy()
             action_shape = first_action.shape
             actions_ds = grp.create_dataset('action', shape=(episode_len,) + action_shape, dtype=np.float32)
-            gt_actions_ds = grp.create_dataset('gt_action', shape=(episode_len,) + first_data["actions"].shape, dtype=np.float32)
+            gt_actions_ds = grp.create_dataset('gt_action', shape=(episode_len,) + pack_action(first_data["actions"]).shape, dtype=np.float32)
             mse_ds = grp.create_dataset('action_mse', shape=(episode_len,), dtype=np.float32)
             del first_data, first_obs, first_action_dict, first_action
 
-            for step, data in tqdm(enumerate(ep_iterator), desc=f"Episode {ep_idx}", total=episode_len, leave=False, unit="step", dynamic_ncols=True):
+            for step, data in enumerate(ep_iterator):
                 obs = unparse_observation(data, args.device, args.prompt)
                 with torch.inference_mode():
                     action_dict = policy.infer(obs)
@@ -295,13 +344,12 @@ def main():
                 state = np.array(data['observation.state'], dtype=np.float32)
                 action = real_actions.cpu().numpy() if isinstance(real_actions, torch.Tensor) else np.array(real_actions, dtype=np.float32)
                 steps_ds[step] = step
-                states_ds[step] = state
+                states_ds[step] = pack_action(state)
                 actions_ds[step] = action
-                gt_actions_ds[step] = np.array(data["actions"], dtype=np.float32)
+                gt_actions_ds[step] = pack_action(np.array(data["actions"], dtype=np.float32))
             all_pred_actions = actions_ds[:]
             all_gt_actions = np.expand_dims(gt_actions_ds[:], axis=1)
-            real_all_gt_actions = pack_real_action(all_gt_actions, args.use_arms, args.use_waist_angles, args.use_tcp_pose, axis=-1)
-            mse_ds[:] = compute_stepwise_action_mse(all_pred_actions, real_all_gt_actions, action_shape[0])
+            mse_ds[:] = compute_stepwise_action_mse(all_pred_actions, all_gt_actions, action_shape[0])
             valid_mse = mse_ds[:][~np.isnan(mse_ds[:])]
             q25, q50, q75 = np.percentile(valid_mse, [25, 50, 75])
             ep_stats = {
