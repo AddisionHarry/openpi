@@ -171,3 +171,5 @@ huggingface_root
 checkpoints
 .VSCodeCounter
 data_domain
+trajectory.mp4
+output.h5

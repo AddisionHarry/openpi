@@ -159,7 +159,23 @@ elif [ "$TASK" == "9" ]; then
         --total-steps 20000
 
 elif [ "$TASK" == "10" ]; then
-    echo "No task assigned for TASK=10 yet."
+    CUDA_VISIBLE_DEVICES=1,2
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_waist && \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+        pi0_industrial_sorting_joint_waist --exp-name=pi0_industrial_sorting_waist_action_1214data_20251220 --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_industrial_sorting_joint_waist --exp-name=pi0_industrial_sorting_waist_action_1214data_20251220 --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251214/pi0_industrial_sorting_joint_waist \
+        --model-root /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist/pi0_industrial_sorting_waist_action_1214data_20251220 \
+        --config-name pi0_industrial_sorting_joint_waist \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 20000
 
 fi
 

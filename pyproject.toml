@@ -39,6 +39,7 @@ dependencies = [
     "polars>=1.30.0",
     "kornia>=0.8.2",
     "ffmpeg-python>=0.2.0",
+    "pytorch-kinematics>=0.7.6",
 ]
 
 
