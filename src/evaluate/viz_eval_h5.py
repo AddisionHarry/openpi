@@ -39,7 +39,8 @@ def save_hist(data, path, title, xlabel, ylabel, bins=50):
     plt.figure(figsize=(6, 4))
     plt.hist(data, bins=bins)
     plt.xlabel(xlabel); plt.ylabel(ylabel); plt.title(title)
-    plt.tight_layout(); plt.savefig(path); plt.close()
+    plt.tight_layout(); plt.grid(True); plt.grid(True, linestyle='--', color='gray', alpha=0.5)
+    plt.savefig(path, dpi=600); plt.close()
 
 
 def save_curve(y, path, title, xlabel, ylabel):
@@ -47,7 +48,8 @@ def save_curve(y, path, title, xlabel, ylabel):
     plt.figure(figsize=(6, 4))
     plt.plot(y)
     plt.xlabel(xlabel); plt.ylabel(ylabel); plt.title(title)
-    plt.tight_layout(); plt.savefig(path); plt.close()
+    plt.tight_layout(); plt.grid(True); plt.grid(True, linestyle='--', color='gray', alpha=0.5)
+    plt.savefig(path, dpi=600); plt.close()
 
 
 def main():
@@ -73,6 +75,10 @@ def main():
     save_curve(mean_mse[order], out_dir / "episode_mean_mse_sorted.png",
                title="Episodes Sorted by Mean MSE",
                xlabel="Episode (sorted)", ylabel="Mean Action MSE")
+
+    save_curve(mean_mse, out_dir / "episode_mean_mses.png",
+               title="Episodes Mean MSE",
+               xlabel="Episode Index", ylabel="Mean Action MSE")
 
     # Select top-K worst episodes for detailed visualization
     top_k = min(args.top_k, len(order))
