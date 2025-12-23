@@ -10,6 +10,7 @@
     "python.testing.pytestEnabled": true,
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src",
-        "${workspaceFolder}/src/check_dataset"
+        "${workspaceFolder}/src/check_dataset",
+        "${workspaceFolder}/src/naviai_inference/workspace/diffusion_policy_ws/src/naviai_manip_diffusion_policy/src"
     ]
 }

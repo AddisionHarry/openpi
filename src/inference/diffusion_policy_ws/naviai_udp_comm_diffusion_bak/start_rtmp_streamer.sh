@@ -1,5 +1,0 @@
-#!/bin/bash
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-python3 ${SCRIPT_DIR}/src/naviai_robot_webrtc.py --ip 192.168.217.10 --orin

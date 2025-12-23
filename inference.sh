@@ -22,17 +22,17 @@ if [ $TEST_DISPLAY -eq 1 ]; then
         --port 10043 \
         --chunk-size 50 \
         --dataset-action-fps 30 \
-        --dataset-dir "/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251128/industrial_sorting_joint_space_right_arm_jax" \
+        --dataset-dir "/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251214/pi0_industrial_sorting_joint_waist" \
         --episode-index 10 \
         --use-arms "[False, True]" \
         --use-waist-angles False \
         --use-tcp-pose False
 else
     echo "[INFO] Normal inference server.py"
-    CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
+    CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
         uv run python3 ${SCRIPT_DIR}/src/inference/server.py \
-        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_change_prompt/pi0_industrial_sorting_waist_action_1214data_update_prompt/19999 \
+        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist/pi0_industrial_sorting_waist_action_1214data_20251220/30000 \
         --device cuda:0 \
-        --config_name pi0_industrial_sorting_joint_waist_change_prompt \
+        --config_name pi0_industrial_sorting_joint_waist \
         --port 10043
 fi

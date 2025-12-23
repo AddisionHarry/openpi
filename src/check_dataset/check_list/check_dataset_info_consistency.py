@@ -134,7 +134,7 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
             errors += 1
             continue
 
-        mp4s = sorted(cam_dir.glob("episode_*.mp4"))
+        mp4s = sorted(list(cam_dir.glob("episode_*.mp4")) + list(cam_dir.glob("episode_*.avi")))
         if not mp4s:
             tqdm.write(f"[ERROR] no videos in {cam_dir}")
             errors += 1
@@ -143,14 +143,14 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
         real_shape = get_video_shape(mp4s[0])
         recorded_shape = feat_info["shape"]
 
-        if real_shape != recorded_shape:
+        if real_shape[:-1] != recorded_shape[:-1]:
             tqdm.write(
                 f"[ERROR] image feature '{feat_name}' shape mismatch: "
                 f"info={recorded_shape}, video={real_shape}"
             )
             errors += 1
             if fix:
-                feat_info["shape"] = real_shape
+                feat_info["shape"] = real_shape[:-1] + feat_info["shape"][-1]
                 tqdm.write(
                     f"[FIXED] image feature '{feat_name}' shape -> {real_shape}"
                 )

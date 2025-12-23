@@ -1,3 +1,0 @@
-int8 mode # 0: right_left_waist, 1: right_left, 2: end_mode
----
-bool success

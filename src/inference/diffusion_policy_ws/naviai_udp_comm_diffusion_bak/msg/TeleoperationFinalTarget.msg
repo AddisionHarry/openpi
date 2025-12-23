@@ -1,3 +1,0 @@
-robot_uplimb_pkg/WholeBodyPositionVelocity target
-geometry_msgs/Twist chassisCmd
-float64[4] waistTargetForWheeled

@@ -1,4 +1,0 @@
-geometry_msgs/Pose target_pose
-bool not_wait
----
-std_msgs/Bool finish

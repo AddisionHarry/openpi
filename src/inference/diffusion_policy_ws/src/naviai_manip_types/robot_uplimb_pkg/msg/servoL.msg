@@ -1,9 +1,0 @@
-bool leftArmValid
-bool rightArmValid
-
-geometry_msgs/Vector3 leftArmTargetPos
-geometry_msgs/Quaternion leftArmTargetQuat
-geometry_msgs/Vector3 rightArmTargetPos
-geometry_msgs/Quaternion rightArmTargetQuat
-
-float64 dt

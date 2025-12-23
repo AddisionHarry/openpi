@@ -7,6 +7,7 @@ maintaining each script's tqdm progress bar and printing outputs.
 After all checks are done, it prints a summary of which checks passed or failed.
 """
 
+import argparse
 import os
 from tqdm import tqdm
 import sys
@@ -64,7 +65,7 @@ CHECKS = [
     (
         "Check Video Frames",
         check_list.check_lerobot_video_frames_func,
-        lambda dataset_dir, fix: (dataset_dir, fix)
+        lambda dataset_dir, fix: (dataset_dir, 1)
     ),
 ]
 
@@ -75,7 +76,7 @@ def main(dataset_dir: str, fix: bool = False):
 
     results = {}
 
-    for i, (check_name, check_func, arg_func) in enumerate(tqdm(CHECKS, desc="Running dataset checks")):
+    for i, (check_name, check_func, arg_func) in enumerate(CHECKS):
         tqdm.write(f"\n[{i+1}/{len(CHECKS)}] ================== Running {check_name} ==================\n")
         try:
             args = arg_func(dataset_dir, fix)
@@ -93,7 +94,13 @@ def main(dataset_dir: str, fix: bool = False):
 
 
 if __name__ == "__main__":
-    import argparse
+    import os
+    if os.environ.get("DEBUG_MODE", "0") == "1":
+        import debugpy
+        debugpy.listen(("0.0.0.0", 5678))
+        print("Waiting for VS Code debugger to attach on port 5678...")
+        debugpy.wait_for_client()
+        print("Debugger attached, resuming execution...")
 
     parser = argparse.ArgumentParser(description="Top-level dataset checker for LeRobot")
     parser.add_argument("--dataset-dir", required=True, help="Root path of dataset to check")

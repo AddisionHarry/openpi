@@ -121,7 +121,7 @@ def check_delete_depth_info_func(input_path, fix=False):
         return False
 
     # Perform deletion
-    print("🔧 Removing keys (in-place)...")
+    print(" Removing keys (in-place)...")
     cleaned = remove_bad_keys(data)
 
     with open(input_path, "w", encoding="utf-8") as f:

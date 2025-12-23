@@ -4,3 +4,6 @@
 [submodule "third_party/libero"]
 	path = third_party/libero
 	url = https://github.com/Lifelong-Robot-Learning/LIBERO.git
+[submodule "src/naviai_inference"]
+	path = src/naviai_inference
+	url = https://github.com/AddisionHarry/NAVIAI-ModelInference.git

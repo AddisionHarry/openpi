@@ -1,4 +1,0 @@
-float32[] jnt_angle
-bool not_wait
----
-std_msgs/Bool finish
