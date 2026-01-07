@@ -1,7 +1,7 @@
 {
     "[python]": {
-        "editor.defaultFormatter": "charliermarsh.ruff",
-        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "vscode.json-language-features",
+        "editor.formatOnSave": true
     },
     "python.testing.pytestArgs": [
         "src"
@@ -12,5 +12,11 @@
         "${workspaceFolder}/src",
         "${workspaceFolder}/src/check_dataset",
         "${workspaceFolder}/src/naviai_inference/workspace/diffusion_policy_ws/src/naviai_manip_diffusion_policy/src"
-    ]
+    ],
+    // "python.analysis.typeCheckingMode": "off",
+    // "python.analysis.diagnosticSeverityOverrides": {
+    //     "reportOptionalMemberAccess": "none",
+    //     "reportArgumentTypeCheck": "none",
+    //     "reportGeneralTypeIssues": "none"
+    // }
 }

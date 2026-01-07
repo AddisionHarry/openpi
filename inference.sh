@@ -29,10 +29,10 @@ if [ $TEST_DISPLAY -eq 1 ]; then
         --use-tcp-pose False
 else
     echo "[INFO] Normal inference server.py"
-    CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
-        uv run python3 ${SCRIPT_DIR}/src/inference/server.py \
-        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist/pi0_industrial_sorting_waist_action_1214data_20251220/30000 \
+    CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
+        uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
+        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_manually_cleaned20251229/pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20251229/25000 \
         --device cuda:0 \
-        --config_name pi0_industrial_sorting_joint_waist \
+        --config_name pi0_industrial_sorting_joint_waist_manually_cleaned20251229 \
         --port 10043
 fi

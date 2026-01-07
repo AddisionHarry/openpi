@@ -62,6 +62,8 @@ while [[ $# -gt 0 ]]; do
       USE_TCP_POSE="$2"; shift 2 ;;
     --total-steps)
       TOTAL_STEPS="$2"; shift 2 ;;
+    --inference-res-freq)
+      INFERENCE_RES_FREQ="$2"; shift 2 ;;
     *)
       echo "Unknown argument: $1"
       exit 1 ;;
@@ -76,6 +78,7 @@ done
 : "${USE_WAIST_ANGLES:?Missing --use-waist-angles}"
 : "${USE_TCP_POSE:?Missing --use-tcp-pose}"
 : "${TOTAL_STEPS:?Missing --total-steps}"
+: "${INFERENCE_RES_FREQ:?Missing --inference-res-freq}"
 
 if [[ "$USE_ARMS" != "["*"]" ]]; then
   echo "[ERROR] --use-arms must be quoted, e.g. \"[False, True]\""
@@ -97,6 +100,7 @@ echo "  CUDA_VISIBLE_DEVICES_ARG = ${CUDA_VISIBLE_DEVICES_ARG}"
 echo "  DATASET_DIR              = ${DATASET_DIR}"
 echo "  MODEL_ROOT               = ${MODEL_ROOT}"
 echo "  TOTAL_STEPS              = ${TOTAL_STEPS}"
+echo "  INFERENCE_RES_FREQ       = ${INFERENCE_RES_FREQ}"
 echo "Will evaluate steps: ${STEPS[@]}"
 echo
 
@@ -125,15 +129,21 @@ for STEP in "${STEPS[@]}"; do
     --device "${DEVICE}" \
     --use-arms "${USE_ARMS}" \
     --use-waist-angles "${USE_WAIST_ANGLES}" \
-    --use-tcp-pose "${USE_TCP_POSE}"
+    --use-tcp-pose "${USE_TCP_POSE}" \
+    --inference-res-freq "${INFERENCE_RES_FREQ}"
+
+  uv run python3 /root/openpi/src/evaluate/viz_eval_h5.py \
+    --h5-path "${OUTPUT_PATH}" \
+    --out-dir "${MODEL_ROOT}/eval_results/${STEP}/viz" \
+    --top-k 30 --chunk-stride 10
 done
 
-# DEBUG_MODE=0 CUDA_VISIBLE_DEVICES=0 uv run python3 /root/openpi/scripts/test/test_eval_dataset.py \
-#     --dataset-dir /root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_manually_cleaned_20251210/pi0_zjhumanoid_industrial_sorting_jax \
+# DEBUG_MODE=1 CUDA_VISIBLE_DEVICES=1 uv run python3 /root/openpi/src/evaluate/eval_dataset.py \
+#     --dataset-dir /root/openpi/data_domain/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
 #     --episode-all \
-#     --model-path /root/openpi/checkpoints/pi0_zjhumanoid_industrial_sorting_jax/industrial_sorting_cleaned_waist_action/5000 \
-#     --config-name pi0_zjhumanoid_industrial_sorting_jax \
-#     --output-path /root/openpi/checkpoints/pi0_zjhumanoid_industrial_sorting_jax/industrial_sorting_cleaned_waist_action/5000/evaluate.h5 \
+#     --model-path /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_manually_cleaned20251227/pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20251227/24999 \
+#     --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251227 \
+#     --output-path /root/openpi/evaluate.h5 \
 #     --device cuda:0 \
 #     --use-arms "[False, True]" --use-waist-angles True --use-tcp-pose False
 

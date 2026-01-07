@@ -21,6 +21,7 @@ Usage Example:
 import argparse
 import ast
 import json
+from math import floor
 from tqdm import tqdm
 from pathlib import Path
 import numpy as np
@@ -30,6 +31,7 @@ import cv2
 import h5py
 from openpi.training import config
 from openpi.policies import policy_config
+from openpi.policies.zj_humanoid_policy import make_zj_humanoid_example
 
 ACTION_IDX = {
     "left_arm_tcp":   (38, 45),
@@ -54,8 +56,10 @@ def parse_args():
     parser.add_argument("--episode-index", type=int, help="Single episode index to process")
     parser.add_argument("--episode-all", action="store_true", help="Process all episodes")
     parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--inference-res-freq", type=float, default=30.0, help="Inference resolution frequency (Hz)")
     parser.add_argument("--config-name", type=str, required=True)
     parser.add_argument("--prompt", type=str, default="do something")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for model inference")
     parser.add_argument("--output-path", type=str, default="output.h5")
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--use-arms", type=ast.literal_eval, default="[False, True]", help="Example: \"[False, True]\"")
@@ -64,10 +68,12 @@ def parse_args():
     return parser.parse_args()
 
 class EpisodeDataIterator:
-    def __init__(self, dataset_root: str, episode_idx: int, cache_videos: bool = False):
+    def __init__(self, dataset_root: str, episode_idx: int, batch_size: int = 1, cache_videos: bool = False):
         self.dataset_root = Path(dataset_root)
         self.episode_idx = episode_idx
         self.cache_videos = cache_videos
+        self.batch_size = batch_size
+        assert batch_size >= 1, "Batch size must be at least 1."
 
         # Load parquet data
         self.episode_file = self._find_episode_file()
@@ -165,14 +171,30 @@ class EpisodeDataIterator:
         return self
 
     def __next__(self) -> dict:
-        if self.current_step >= self.episode_len:
-            for cap in self.video_caps.values():
-                cap.release()
-            self.video_caps.clear()
-            raise StopIteration
-        step_data = self._read_single_step(self.current_step)
-        self.current_step += 1
-        return step_data
+        if self.batch_size == 1:
+            if self.current_step >= self.episode_len:
+                for cap in self.video_caps.values():
+                    cap.release()
+                self.video_caps.clear()
+                raise StopIteration
+            step_data = self._read_single_step(self.current_step)
+            self.current_step += 1
+            return step_data
+        else:
+            if self.current_step >= self.episode_len:
+                for cap in self.video_caps.values():
+                    cap.release()
+                self.video_caps.clear()
+                raise StopIteration
+            batch = []
+            for _ in range(self.batch_size):
+                if self.current_step >= self.episode_len:
+                    break
+                batch.append(self._read_single_step(self.current_step))
+                self.current_step += 1
+            if not batch:
+                raise StopIteration
+            return batch
 
     def __len__(self) -> int:
         return self.episode_len
@@ -246,6 +268,14 @@ def load_action_names_from_meta(dataset_dir: str) -> list[str]:
         meta = json.load(f)
     return meta["features"]["actions"]["names"]
 
+def load_dataset_frequency_from_meta(dataset_dir: str) -> float:
+    meta_path = Path(dataset_dir) / "meta" / "info.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"Meta info.json not found: {meta_path}")
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+    return meta["fps"]
+
 def pack_action_joint_names(
     action_names: list[str],
     use_arms: tuple[bool, bool],
@@ -274,13 +304,13 @@ def pack_action_joint_names(
         segments.extend(slice_names(action_names, s, e))
     return segments
 
-def compute_stepwise_action_mse(all_pred_actions: np.ndarray, all_gt_actions: np.ndarray, chunk_length: int) -> np.ndarray:
+def compute_stepwise_action_mse(all_pred_actions: np.ndarray, all_gt_actions: np.ndarray, chunk_length: int, resample_ratio: int = 1) -> np.ndarray:
     episode_len = all_gt_actions.shape[0]
     mse_per_step = np.zeros(episode_len, dtype=np.float32)
     for step in range(episode_len):
-        valid_len = min(chunk_length, episode_len - step)
-        pred_chunk = all_pred_actions[step:step + valid_len]
-        gt_chunk = all_gt_actions[step:step + valid_len]
+        valid_len = max(min(chunk_length, floor((episode_len - step) / resample_ratio)), 1)
+        pred_chunk = all_pred_actions[step, :valid_len, :]
+        gt_chunk = all_gt_actions[step:step + valid_len * resample_ratio:resample_ratio, 0, :]
         mse_per_step[step] = float(np.mean((pred_chunk - gt_chunk) ** 2))
     return mse_per_step
 
@@ -296,6 +326,12 @@ def main():
     else:
         all_episode_indices = [args.episode_index]
 
+    dataset_freq = load_dataset_frequency_from_meta(args.dataset_dir)
+    resample_ratio = dataset_freq / args.inference_res_freq
+    assert (resample_ratio >= 1.0) and (abs(resample_ratio - round(resample_ratio)) < 1e-3), "Inference frequency must be lower than or equal to dataset frequency by an integer factor."
+    resample_ratio = round(resample_ratio)
+    print(f"[Info] Dataset frequency: {dataset_freq} Hz, Inference frequency: {args.inference_res_freq} Hz, Resample ratio: {resample_ratio:.4f}")
+
     all_action_names = load_action_names_from_meta(args.dataset_dir)
     joint_names = pack_action_joint_names(
         all_action_names, args.use_arms, args.use_waist_angles, args.use_tcp_pose)
@@ -306,11 +342,26 @@ def main():
     cfg = config.get_config(args.config_name)
     policy = policy_config.create_trained_policy(cfg, args.model_path)
     print("[Model] Loaded trained policy.")
+    first_obs = make_zj_humanoid_example(cfg.data.use_arms, cfg.data.use_tcp_pose,
+                                         cfg.data.use_wrist_cameras, cfg.data.obs_use_waist_angles)
+    first_data = policy.infer(first_obs)
+    state_dim = len(joint_names)
+    first_action = first_data['actions']
+    action_shape = first_action.cpu().numpy().shape if isinstance(first_action, torch.Tensor) else first_action.shape
+    print("[Model] Policy dry-run finished.")
 
     with h5py.File(args.output_path, 'w') as h5_file:
+        config_grp = h5_file.create_group("config")
+        config_grp.attrs["dataset_freq_hz"] = dataset_freq
+        config_grp.attrs["inference_freq_hz"] = args.inference_res_freq
+        config_grp.attrs["resample_ratio"] = resample_ratio
+        config_grp.attrs["chunk_length"] = action_shape[0]
+        config_grp.attrs["use_arms"] = [int(use_arm) for use_arm in args.use_arms]
+        config_grp.attrs["use_waist_angles"] = int(args.use_waist_angles)
+        config_grp.attrs["use_tcp_pose"] = int(args.use_tcp_pose)
         episode_mse_stats = []
         for ep_idx in tqdm(all_episode_indices, desc="Episodes", dynamic_ncols=True):
-            ep_iterator = EpisodeDataIterator(args.dataset_dir, ep_idx, cache_videos=True)
+            ep_iterator = EpisodeDataIterator(args.dataset_dir, ep_idx, args.batch_size, cache_videos=True)
             episode_len = len(ep_iterator)
             grp = h5_file.create_group(f"episode_{ep_idx:06d}")
             steps_ds = grp.create_dataset('step', shape=(episode_len,), dtype=np.int32)
@@ -320,35 +371,44 @@ def main():
                 data=np.array(joint_names, dtype=object),
                 dtype=str_dt,
             )
-            first_data = next(iter(ep_iterator))
-            state_dim = len(pack_action(first_data['observation.state']))
             states_ds = grp.create_dataset('state', shape=(episode_len, state_dim), dtype=np.float32)
-            first_obs = unparse_observation(first_data, args.device, args.prompt)
-            with torch.inference_mode():
-                first_action_dict = policy.infer(first_obs)
-            first_action = first_action_dict['actions']
-            if isinstance(first_action, torch.Tensor):
-                first_action = first_action.cpu().numpy()
-            action_shape = first_action.shape
             actions_ds = grp.create_dataset('action', shape=(episode_len,) + action_shape, dtype=np.float32)
-            gt_actions_ds = grp.create_dataset('gt_action', shape=(episode_len,) + pack_action(first_data["actions"]).shape, dtype=np.float32)
+            gt_actions_ds = grp.create_dataset('gt_action', shape=(episode_len, state_dim), dtype=np.float32)
             mse_ds = grp.create_dataset('action_mse', shape=(episode_len,), dtype=np.float32)
-            del first_data, first_obs, first_action_dict, first_action
-
-            for step, data in enumerate(ep_iterator):
-                obs = unparse_observation(data, args.device, args.prompt)
-                with torch.inference_mode():
-                    action_dict = policy.infer(obs)
-                real_actions = action_dict['actions']
-                state = np.array(data['observation.state'], dtype=np.float32)
-                action = real_actions.cpu().numpy() if isinstance(real_actions, torch.Tensor) else np.array(real_actions, dtype=np.float32)
-                steps_ds[step] = step
-                states_ds[step] = pack_action(state)
-                actions_ds[step] = action
-                gt_actions_ds[step] = pack_action(np.array(data["actions"], dtype=np.float32))
+            first_data = next(iter(ep_iterator))
+            if args.batch_size == 1:
+                for step, data in enumerate(ep_iterator):
+                    obs = unparse_observation(data, args.device, args.prompt)
+                    with torch.inference_mode():
+                        action_dict = policy.infer(obs)
+                    real_actions = action_dict['actions']
+                    state = np.array(data['observation.state'], dtype=np.float32)
+                    action = real_actions.cpu().numpy() if isinstance(real_actions, torch.Tensor) else np.array(real_actions, dtype=np.float32)
+                    steps_ds[step] = step
+                    states_ds[step] = pack_action(state)
+                    actions_ds[step] = action
+                    gt_actions_ds[step] = pack_action(np.array(data["actions"], dtype=np.float32))
+            else:
+                assert isinstance(first_data, list)
+                assert len(first_data) <= args.batch_size
+                global_step = 0
+                for batch_data in ep_iterator:
+                    obs_batch = [unparse_observation(step_data, args.device, args.prompt) for step_data in batch_data]
+                    with torch.inference_mode():
+                        action_dict = policy.infer_batch(obs_batch)
+                    actions = action_dict["actions"]
+                    if isinstance(actions, torch.Tensor):
+                        actions = actions.cpu().numpy()
+                    for i, step_data in enumerate(batch_data):
+                        states_ds[global_step] = pack_action(step_data["observation.state"])
+                        actions_ds[global_step] = actions[i]
+                        gt = pack_action(step_data["actions"])
+                        gt_actions_ds[global_step] = gt
+                        mse_ds[global_step] = np.mean((actions[i] - gt) ** 2)
+                        global_step += 1
             all_pred_actions = actions_ds[:]
             all_gt_actions = np.expand_dims(gt_actions_ds[:], axis=1)
-            mse_ds[:] = compute_stepwise_action_mse(all_pred_actions, all_gt_actions, action_shape[0])
+            mse_ds[:] = compute_stepwise_action_mse(all_pred_actions, all_gt_actions, action_shape[0], resample_ratio=resample_ratio)
             valid_mse = mse_ds[:][~np.isnan(mse_ds[:])]
             q25, q50, q75 = np.percentile(valid_mse, [25, 50, 75])
             ep_stats = {
@@ -362,7 +422,6 @@ def main():
                 "max": np.max(valid_mse)
             }
             episode_mse_stats.append(ep_stats)
-
         summary_grp = h5_file.create_group("episode_mse_summary")
         for key in ["episode_idx", "mean", "std", "min", "q25", "median", "q75", "max"]:
             summary_grp.create_dataset(key, data=[s[key] for s in episode_mse_stats])

@@ -20,7 +20,9 @@ from tqdm import tqdm
 import matplotlib
 matplotlib.use("Agg")  # Force headless backend before importing pyplot
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.collections import LineCollection
 
 
 def parse_args():
@@ -35,21 +37,89 @@ def parse_args():
 
 
 def save_hist(data, path, title, xlabel, ylabel, bins=50):
-    """Save histogram plot to file."""
+    """Save histogram plot with mode annotated."""
     plt.figure(figsize=(6, 4))
-    plt.hist(data, bins=bins)
+    counts, edges, _ = plt.hist(data, bins=bins, color='steelblue', edgecolor='black')
+    mode_idx = np.argmax(counts)
+    mode_val = (edges[mode_idx] + edges[mode_idx+1]) / 2  # bin center
+    plt.scatter([mode_val], [counts[mode_idx]], color='tomato', s=40, edgecolors='white', linewidth=0.6, zorder=5)
+    plt.text(mode_val, counts[mode_idx]*1.01, f"mode={mode_val:.4f}", color='tomato', fontsize=8, ha='center', va='bottom')
     plt.xlabel(xlabel); plt.ylabel(ylabel); plt.title(title)
+    plt.tight_layout(); plt.grid(True, linestyle='--', color='gray', alpha=0.5)
+    plt.savefig(path, dpi=600); plt.close()
+
+
+def save_curve_with_mean_std(y, path, title, xlabel, ylabel):
+    y = np.asarray(y, dtype=np.float32)
+    y_mean = float(np.mean(y))
+    y_std = float(np.std(y))
+    y_min, y_max = float(np.min(y)), float(np.max(y))
+    max_x = len(y) - 1
+    max_y = y[-1]
+    plt.figure(figsize=(6, 4)); ax = plt.gca()
+    ax.plot(y, color='steelblue', linewidth=2, label='episode mean MSE')
+    ax.set_xlabel(xlabel); ax.set_ylabel(ylabel); ax.set_title(title)
+    # Vertical line & marker for last point (max x)
+    ax.plot([max_x, max_x], [y_min, max_y], color='gray', linestyle=':', linewidth=1, alpha=0.7)
+    ax.scatter([max_x], [max_y], color='steelblue', s=25, edgecolors='white', linewidth=0.6, zorder=3)
+    ax.text(max_x, y_min - 0.02*(y_max - y_min), f"{max_x}", ha='center', va='top', fontsize=8, color='dimgray')
+    # Mean line
+    ax.axhline(y_mean, color='tomato', linestyle='--', linewidth=1.5, alpha=0.9, label=f'mean = {y_mean:.4f}')
+    # Ensure ylim covers mean
+    pad = 0.05*(y_max - y_min + 1e-8)
+    ax.set_ylim(min(y_min, y_mean) - pad, max(y_max, y_mean) + pad)
+    # Legend + std text
+    leg = ax.legend(fontsize=8, frameon=False)
+    ax.text(0.08, 0.86, f"std = {y_std:.4f}", transform=ax.transAxes, fontsize=8, va='top', ha='left')
+    ax.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout(); plt.savefig(path, dpi=600, bbox_inches='tight'); plt.close()
+
+
+def save_quantile_curve(y, path, title, xlabel, ylabel):
+    """Save quantile curve to file."""
+    y = np.asarray(y, dtype=np.float32); n = len(y)
+    x = np.linspace(0, 100, n)
+    mid = n // 2; x_med = float(x[mid]); y_med = float(np.median(y))
+    plt.figure(figsize=(6, 4)); ax = plt.gca()
+    ax.plot(x, y, label='quantile')
+    # median point
+    ax.scatter([x_med], [y_med], s=35, color='tomato',
+               edgecolors='white', linewidth=0.6, zorder=4)
+    # axis limits
+    y_min, y_max = float(np.min(y)), float(np.max(y))
+    pad = 0.05 * (y_max - y_min + 1e-8)
+    ax.set_ylim(y_min - pad, y_max + pad)
+    ax.set_xlim(x[0], x[-1])
+    # dashed helper lines (capture handle)
+    x0, _ = ax.get_xlim()
+    y0, _ = ax.get_ylim()
+    hline, = ax.plot([x0, x_med], [y_med, y_med], color='tomato', linestyle='--', linewidth=1.2, alpha=0.9)
+    ax.plot([x_med, x_med], [y0, y_med], color='tomato', linestyle='--', linewidth=1.2, alpha=0.9)
+    ax.set_xlabel(xlabel); ax.set_ylabel(ylabel); ax.set_title(title)
+    ax.legend([hline], [f'median = {y_med:.4f}'], fontsize=8, frameon=False)
     plt.tight_layout(); plt.grid(True); plt.grid(True, linestyle='--', color='gray', alpha=0.5)
     plt.savefig(path, dpi=600); plt.close()
 
 
-def save_curve(y, path, title, xlabel, ylabel):
-    """Save line plot to file."""
-    plt.figure(figsize=(6, 4))
-    plt.plot(y)
-    plt.xlabel(xlabel); plt.ylabel(ylabel); plt.title(title)
-    plt.tight_layout(); plt.grid(True); plt.grid(True, linestyle='--', color='gray', alpha=0.5)
-    plt.savefig(path, dpi=600); plt.close()
+def load_config_from_h5(h5_path: str) -> dict:
+    with h5py.File(h5_path, "r") as f:
+        config = {}
+        if 'config' not in f:
+            print("Warning: 'config' group not found in H5 file")
+            return config
+        config_group = f['config']
+        for key in config_group.attrs:
+            value = config_group.attrs[key]
+            if isinstance(value, (np.ndarray, list)):
+                if key == 'use_arms' and len(value) > 0:
+                    config[key] = [bool(x) for x in value]
+                else:
+                    config[key] = value.tolist() if hasattr(value, 'tolist') else list(value)
+            elif isinstance(value, (np.int64, np.int32, np.float64)):
+                config[key] = value.item()
+            else:
+                config[key] = value
+        return config
 
 
 def main():
@@ -72,161 +142,73 @@ def main():
 
     # Sort episodes by MSE (worst to best) and plot sorted curve
     order = np.argsort(mean_mse)[::-1]
-    save_curve(mean_mse[order], out_dir / "episode_mean_mse_sorted.png",
-               title="Episodes Sorted by Mean MSE",
-               xlabel="Episode (sorted)", ylabel="Mean Action MSE")
+    save_quantile_curve(mean_mse[order], out_dir / "episode_mean_mse_upper_quantile.png",
+                        title="Upper Quantile Analysis of Episode MSE\n(Lower Percentile = Better Performance)",
+                        xlabel="Upper Quantile Percentile (%)", ylabel="Mean Action MSE")
 
-    save_curve(mean_mse, out_dir / "episode_mean_mses.png",
-               title="Episodes Mean MSE",
-               xlabel="Episode Index", ylabel="Mean Action MSE")
+    save_curve_with_mean_std(mean_mse, out_dir / "episode_mean_mses.png", title="Episodes Mean MSE",
+                              xlabel="Episode Index", ylabel="Mean Action MSE")
 
+    print("Finished episode-level visualizations.")
     # Select top-K worst episodes for detailed visualization
     top_k = min(args.top_k, len(order))
     worst_eps = episode_idx[order[:top_k]]
 
-    # Generate detailed visualizations for each worst episode
+    resample_ratio = 3
+    # resample_ratio = load_config_from_h5(h5_path).get('resample_ratio', 1)
     with h5py.File(h5_path, "r") as f:
         for ep in tqdm(worst_eps, desc="Processing episodes", dynamic_ncols=True):
-            ep_name = f"episode_{ep:06d}"
-            grp = f[ep_name]
+            ep_name = f"episode_{ep:06d}"; grp = f[ep_name]
+            joint_names = [n.decode() if isinstance(n, bytes) else str(n) for n in grp["action_joint_names"][:]]
 
-            # Load joint names if available
-            joint_names = None
-            if "action_joint_names" in grp:
-                joint_names = [name.decode("utf-8") if isinstance(name, bytes) else str(name)
-                             for name in grp["action_joint_names"][:]]
-            else:
-                raise KeyError(f"{ep_name} does not contain 'action_joint_names' dataset.")
-
-            # Load episode data: step-wise MSE, predictions, and ground truth
-            step_mse = grp["action_mse"][:]  # (T,) step-wise MSE values
-            pred = grp["action"][:]          # (T, H, D) predicted action chunks
-            gt = grp["gt_action"][:]         # (T, D) ground truth actions
-
-            dt = 1.0  # Time step
-            T, H, D = pred.shape  # T: time steps, H: horizon, D: action dimension
-
-            # Calculate x-axis limits (rounded up to nearest multiple of 50)
-            max_time = int(np.ceil(T / 50.0) * 50)
+            step_mse = grp["action_mse"][:]; pred = grp["action"][:]; gt = grp["gt_action"][:]
+            ep_mse = float(step_mse.mean()); ep_tag = f"mse_{ep_mse:.6f}_episode_{ep:06d}"
+            T, H, D = pred.shape
+            max_time = int(np.ceil(T / 50) * 50)
             T_cut = min(T, max_time)
-            step_mse = step_mse[:T_cut]
-            pred = pred[:T_cut]
-            gt = gt[:T_cut]
+            step_mse, pred, gt = step_mse[:T_cut], pred[:T_cut], gt[:T_cut]
 
-            if joint_names is not None:
-                assert len(joint_names) == D, f"Joint name count ({len(joint_names)}) mismatch"
+            t_step = np.arange(T_cut); t_chunk = np.arange(H)
+            mse_nz = step_mse[step_mse > 0]; mse_ylim = max(np.percentile(mse_nz, 95) * 1.1, 0.01) if len(mse_nz) else 0.01
 
-            # Create multi-panel figure with one subplot per action dimension
-            fig, axes = plt.subplots(D, 1, figsize=(14, max(4 * D, 10)),
-                                     sharex=True, gridspec_kw={'hspace': 0.1})
-            if D == 1:
-                axes = [axes]  # Ensure axes is always a list
-
+            fig, axes = plt.subplots(D, 1, figsize=(14, max(6 * D, 14)), sharex=True, gridspec_kw=dict(hspace=0.08))
+            axes = axes if D > 1 else [axes]
             colors = plt.cm.tab10(np.linspace(0, 1, max(D, 10)))
-            fig_title = f"{ep_name} Action Chunks (stride={args.chunk_stride}) with GT + MSE"
 
-            # Plot each action dimension in separate subplot
-            for d in tqdm(range(D), desc=f"Processing joints for {ep_name}", leave=False):
-                ax = axes[d]
-                base_color = colors[d]
-                subplot_handles = []  # Legend handles for this subplot
-                subplot_labels = []   # Legend labels for this subplot
-
-                # Draw predicted action chunks with strided sampling
+            for d, ax in enumerate(axes):
+                base_c = colors[d][:3]
+                segments, seg_colors = [], []
                 for i in range(0, T_cut, args.chunk_stride):
-                    local_t = np.arange(H) * dt + i * dt
                     y = pred[i, :, d]
+                    actual_times = np.arange(H) * resample_ratio + i
+                    frac = np.linspace(0, 1, H - 1) ** 0.8
                     for k in range(H - 1):
-                        # Apply fading effect along prediction horizon
-                        frac = (k / max(1, H - 1)) ** 0.8
-                        lw = 1.5 - 1.2 * frac
-                        fade_color = base_color[:3] * (1 - frac) + frac
-                        line = ax.plot(local_t[k:k+2], y[k:k+2], color=fade_color, linewidth=lw)
-                        if i == 0 and k == 0:  # Add legend entry only once
-                            subplot_handles.append(line[0])
-                            subplot_labels.append("Predicted Chunks")
+                        segments.append([[actual_times[k], y[k]], [actual_times[k + 1], y[k + 1]]])
+                        seg_colors.append(base_c * (1 - frac[k]) + frac[k])
+                if segments:
+                    lc = LineCollection(segments, colors=seg_colors, linewidths=[1.5 - 1.2*f for f in frac]*((T_cut-1)//args.chunk_stride + 1))
+                    ax.add_collection(lc)
 
-                # Plot ground truth trajectory
-                gt_line = ax.plot(np.arange(T_cut) * dt, gt[:, d], color="black", linewidth=2.0)
-                subplot_handles.append(gt_line[0])
-                subplot_labels.append("Ground Truth")
+                ax.plot(t_step, gt[:, d], color="black", linewidth=2)
+                ax.set_ylabel(joint_names[d], fontsize=12); ax.grid(True, linewidth=0.3, alpha=0.5)
 
-                # Create secondary axis for MSE visualization (red, right side)
                 ax2 = ax.twinx()
-                t = np.arange(T_cut) * dt
-                mse_fill = ax2.fill_between(t, step_mse, 0, color="red", alpha=0.12, zorder=0, linewidth=0)
-                mse_patch = Patch(facecolor='red', alpha=0.12, label='Action MSE')
-                subplot_handles.append(mse_patch)
-                subplot_labels.append("Action MSE")
+                ax2.fill_between(t_step, step_mse, 0, color='red', alpha=0.12)
 
-                # Configure MSE axis limits and appearance
-                ax2.set_ylim(bottom=0)
-                mse_nonzero = step_mse[step_mse > 0]
-                if len(mse_nonzero) > 0:
-                    mse_max = np.percentile(mse_nonzero, 95)  # Use 95th percentile to exclude outliers
-                    ax2.set_ylim(0, max(mse_max * 1.1, 0.01))
-
-                ax2.tick_params(axis="y", labelsize=8, colors="red")
-                ax2.spines['right'].set_color('red')
-
-                # Configure primary axis (left side, action values)
-                joint_label = joint_names[d] if joint_names is not None else f"dim {d}"
-                ax.set_ylabel(joint_label, fontsize=12)
-                ax.grid(True, linewidth=0.3, alpha=0.5)
-
-                # Add title only to first subplot
                 if d == 0:
-                    ax.set_title(fig_title, fontsize=15, pad=3)
+                    ax.set_title(f"{ep_name} Action Chunks (stride={args.chunk_stride}) with GT + MSE", fontsize=15, pad=3)
+                    ax.legend(handles=[
+                        Line2D([0], [0], color=base_c, lw=1.5, label="Predicted Chunks"),
+                        Line2D([0], [0], color="black", lw=2, label="Ground Truth"),
+                        Patch(facecolor="red", alpha=0.12, label="Action MSE")
+                    ], loc="upper right", fontsize=9, frameon=True)
 
-                # Add legend to top-right corner of each subplot
-                ax.legend(subplot_handles, subplot_labels, loc='upper right', fontsize=9, frameon=True,
-                         fancybox=False, shadow=False, borderpad=0.2, handlelength=1.0,
-                         handletextpad=0.3, labelspacing=0.2)
-
-            # Configure shared x-axis with step numbers
+            tick_spacing = 20 if max_time <= 100 else 40 if max_time <= 200 else 100 if max_time <= 500 else 200
+            x_ticks = np.unique(np.append(np.arange(0, max_time + 1, tick_spacing), max_time))
+            for ax in axes: ax.set_xlim(0, max_time); ax.set_xticks(x_ticks); ax.tick_params(axis="x", labelsize=9)
             axes[-1].set_xlabel("Step", fontsize=12)
-
-            # Set x-axis limits to rounded-up value (e.g., 160 -> 200)
-            axes[-1].set_xlim(0, max_time)
-
-            # Calculate x-axis ticks with step numbers
-            # Determine tick spacing based on max_time
-            if max_time <= 100:
-                tick_spacing = 20
-            elif max_time <= 200:
-                tick_spacing = 40
-            elif max_time <= 500:
-                tick_spacing = 100
-            else:
-                tick_spacing = 200
-
-            # Generate tick positions
-            x_ticks = np.arange(0, max_time + 1, tick_spacing)
-            # Ensure max_time is included if not already
-            if max_time not in x_ticks:
-                x_ticks = np.append(x_ticks, max_time)
-            # Ensure 0 is included
-            if 0 not in x_ticks:
-                x_ticks = np.append(0, x_ticks)
-            x_ticks = np.sort(x_ticks)
-
-            # IMPORTANT: Enable x-axis ticks and labels on all axes
-            for i, ax in enumerate(axes):
-                # Set ticks and tick labels
-                ax.set_xticks(x_ticks)
-                ax.set_xticklabels([str(int(tick)) for tick in x_ticks], fontsize=9)
-                # Ensure bottom spine is visible
-                ax.spines['bottom'].set_visible(True)
-                # Ensure tick labels are visible (not clipped)
-                ax.tick_params(axis='x', which='both', labelsize=9, length=4, width=1)
-                # Only show x-axis label on the bottom subplot
-                if i != len(axes) - 1:
-                    ax.tick_params(axis='x', labelbottom=True)  # Show tick labels on all subplots
-                    ax.set_xlabel('')  # Remove x-label from upper subplots
-
-            # Adjust layout with more bottom space for x-axis labels
-            fig.subplots_adjust(top=0.95 if D == 1 else 0.97, bottom=0.12, left=0.08, right=0.92, hspace=0.08)
-            fig.savefig(out_dir / f"{ep_name}_all_joints_full_chunk.png", dpi=200, bbox_inches='tight')
+            fig.subplots_adjust(top=0.97, bottom=0.12, left=0.08, right=0.92)
+            fig.savefig(out_dir / f"{ep_tag}_all_joints_full_chunk.png", dpi=200, bbox_inches="tight")
             plt.close(fig)
 
     print(f"[Done] Visualization results saved to: {out_dir.resolve()}")

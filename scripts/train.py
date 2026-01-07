@@ -65,10 +65,12 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, log_code: bool = 
             config=dataclasses.asdict(config),
             project=config.project_name,
         )
+        assert wandb.run is not None
         (ckpt_dir / "wandb_id.txt").write_text(wandb.run.id)
 
     if log_code:
-        wandb.run.log_code(epath.Path(__file__).parent.parent)
+        assert wandb.run is not None
+        wandb.run.log_code(str(epath.Path(__file__).parent.parent))
 
 
 def _load_weights_and_validate(loader: _weight_loaders.WeightLoader, params_shape: at.Params) -> at.Params:
@@ -149,7 +151,7 @@ def train_step(
         model: _model.BaseModel, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions
     ):
         chunked_loss = model.compute_loss(rng, observation, actions, train=True)
-        return jnp.mean(chunked_loss)
+        return jnp.mean(jnp.array(chunked_loss))
 
     train_rng = jax.random.fold_in(rng, state.step)
     observation, actions = batch
@@ -307,6 +309,12 @@ if __name__ == "__main__":
         import debugpy
         debugpy.listen(("0.0.0.0", 5678))
         print("Waiting for VS Code debugger to attach on port 5678...")
+        debugpy.wait_for_client()
+        print("Debugger attached, resuming execution...")
+    elif os.environ.get("DEBUG_MODE", "0") == "2":
+        import debugpy
+        debugpy.listen(("0.0.0.0", 5679))
+        print("Waiting for VS Code debugger to attach on port 5679...")
         debugpy.wait_for_client()
         print("Debugger attached, resuming execution...")
     main(_config.cli())

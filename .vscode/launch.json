@@ -56,12 +56,28 @@
             }
         },
         {
-            "name": "Attach to remote training",
+            "name": "Attach to remote training 5678",
             "type": "debugpy",
             "request": "attach",
             "connect": {
                 "host": "127.0.0.1",
                 "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/root/openpi"
+                }
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Attach to remote training 5679",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 5679
             },
             "pathMappings": [
                 {

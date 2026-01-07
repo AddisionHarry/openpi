@@ -41,6 +41,16 @@ def save_info(info: dict, path: Path) -> None:
     with open(path, "w") as f:
         json.dump(info, f, indent=2)
 
+def load_jsonl(path: Path) -> list[dict]:
+    with open(path, "r") as f:
+        return [json.loads(line) for line in f]
+
+
+def save_jsonl(items: list[dict], path: Path) -> None:
+    with open(path, "w") as f:
+        for item in items:
+            f.write(json.dumps(item) + "\n")
+
 
 def downsample_parquet(src_path: Path, dst_path: Path, n: int, k: int, global_index_start: int) -> int:
     """
@@ -134,6 +144,7 @@ def main() -> None:
 
     global_index: int = 0
     total_frames: int = 0
+    episode_lengths: dict[int, int] = {}
     log_lines: list[str] = []
 
     data_root: Path = out_root / "data"
@@ -145,12 +156,14 @@ def main() -> None:
 
         for parquet_path in tqdm(parquet_paths, desc=f"Chunk {chunk_id} episodes", unit="episode"):
             episode_id: str = parquet_path.stem
+            episode_index = int(episode_id.split("_")[-1])
             n: int = random.randint(0, k - 1)
             log_lines.append(f"{episode_id}: n={n}")
 
             # ---- Parquet ----
             dst_parquet: Path = parquet_path
             frames: int = downsample_parquet(parquet_path, dst_parquet, n, k, global_index)
+            episode_lengths[episode_index] = frames
             global_index += frames
             total_frames += frames
 
@@ -164,11 +177,21 @@ def main() -> None:
                 downsample_video_ffmpeg(src_video, tmp_video, n, k, old_fps, new_fps)
                 tmp_video.replace(src_video)
 
-    # Update total frames in info.json
+    # -------- update meta --------
     info["total_frames"] = total_frames
     save_info(info, info_path)
 
-    # Save downsample start offsets
+    episodes_path = out_root / "meta" / "episodes.jsonl"
+    episodes = load_jsonl(episodes_path)
+
+    for ep in episodes:
+        idx = ep["episode_index"]
+        if idx not in episode_lengths:
+            raise RuntimeError(f"Missing episode length for episode {idx}")
+        ep["length"] = episode_lengths[idx]
+
+    save_jsonl(episodes, episodes_path)
+
     with open(out_root / "downsample_start_idx.log", "w") as f:
         f.write("\n".join(log_lines))
 

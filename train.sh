@@ -177,6 +177,126 @@ elif [ "$TASK" == "10" ]; then
         --use-tcp-pose False \
         --total-steps 20000
 
+elif [ "$TASK" == "11" ]; then
+    CUDA_VISIBLE_DEVICES=0
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251229 && \
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_industrial_sorting_joint_waist_manually_cleaned20251229 --exp-name=pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_industrial_sorting_joint_waist_manually_cleaned20251229 --exp-name=pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
+        --model-root /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_manually_cleaned20251229/pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 \
+        --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251229 \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 30000 \
+        --inference-res-freq 10
+
+elif [ "$TASK" == "12" ]; then
+    CUDA_VISIBLE_DEVICES=0
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_waist_manually_cleaned20251229 && \
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi05_industrial_sorting_joint_waist_manually_cleaned20251229 --exp-name=pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi05_industrial_sorting_joint_waist_manually_cleaned20251229 --exp-name=pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
+        --model-root /root/openpi/checkpoints/pi05_industrial_sorting_joint_waist_manually_cleaned20251229/pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 \
+        --config-name pi05_industrial_sorting_joint_waist_manually_cleaned20251229 \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 30000 \
+        --inference-res-freq 10
+
+elif [ "$TASK" == "13" ]; then
+    CUDA_VISIBLE_DEVICES=1
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_waist_manually_cleaned20251230 && \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 DEBUG_MODE=0 uv run scripts/train.py \
+        pi05_industrial_sorting_joint_waist_manually_cleaned20251230 --exp-name=pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251230_31rerun_lowerlr --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi05_industrial_sorting_joint_waist_manually_cleaned20251230 --exp-name=pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251230_31rerun_lowerlr --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
+        --model-root /root/openpi/checkpoints/pi05_industrial_sorting_joint_waist_manually_cleaned20251230/pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251230_31rerun_lowerlr \
+        --config-name pi05_industrial_sorting_joint_waist_manually_cleaned20251230 \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 30000 \
+        --inference-res-freq 10
+
+elif [ "$TASK" == "14" ]; then
+    CUDA_VISIBLE_DEVICES=0
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251230 && \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=1 uv run scripts/train.py \
+        pi0_industrial_sorting_joint_waist_manually_cleaned20251230 --exp-name=pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20260105_30fps --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_industrial_sorting_joint_waist_manually_cleaned20251230 --exp-name=pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20260105_30fps --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
+        --model-root /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_manually_cleaned20251230/pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20260105_30fps \
+        --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251230 \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 30000 \
+        --inference-res-freq 30
+
+elif [ "$TASK" == "15" ]; then
+    CUDA_VISIBLE_DEVICES=0
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_waist_manually_cleaned20251229 && \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+        pi05_industrial_sorting_joint_waist_manually_cleaned20251229 --exp-name=pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi05_industrial_sorting_joint_waist_manually_cleaned20251229 --exp-name=pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
+        --model-root /root/openpi/checkpoints/pi05_industrial_sorting_joint_waist_manually_cleaned20251229/pi05_industrial_sorting_waist_action_1214data_manually_cleaned_20251229 \
+        --config-name pi05_industrial_sorting_joint_waist_manually_cleaned20251229 \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 30000 \
+        --inference-res-freq 30
+
+elif [ "$TASK" == "16" ]; then
+    CUDA_VISIBLE_DEVICES=1
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251230 && \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=2 uv run scripts/train.py \
+        pi0_industrial_sorting_joint_waist_manually_cleaned20251230 --exp-name=pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20260105_30fps --overwrite
+
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_industrial_sorting_joint_waist_manually_cleaned20251230 --exp-name=pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20260105_30fps --resume
+
+    bash /root/openpi/evaluate.sh \
+        --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
+        --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \
+        --model-root /root/openpi/checkpoints/pi0_industrial_sorting_joint_waist_manually_cleaned20251230/pi0_industrial_sorting_waist_action_1214data_manually_cleaned_20260105_30fps \
+        --config-name pi0_industrial_sorting_joint_waist_manually_cleaned20251230 \
+        --use-arms "[False, True]" \
+        --use-waist-angles True \
+        --use-tcp-pose False \
+        --total-steps 30000 \
+        --inference-res-freq 30
+
 fi
 
 # ITER=0

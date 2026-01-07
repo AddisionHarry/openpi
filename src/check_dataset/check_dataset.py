@@ -58,6 +58,11 @@ CHECKS = [
         lambda dataset_dir, fix: (str(dataset_dir), fix)
     ),
     (
+        "Check Action-Observation Consistency",
+        check_list.check_action_observation_consistency_func,
+        lambda dataset_dir, fix: (str(dataset_dir), 15.0, True)
+    ),
+    (
         "Check Parquet Episode Index",
         check_list.check_parquet_episode_index_func,
         lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), fix)

@@ -58,15 +58,21 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
     info = load_json(info_path)
     features = info.get("features", {})
 
+    # Get parquet files with progress bar
+    tqdm.write("Scanning parquet files...")
     parquet_files = sorted(data_dir.glob("episode_*.parquet"))
+    if not parquet_files:
+        tqdm.write("[ERROR] No parquet files found")
+        return False
 
     errors = 0
 
-    # Get Episode / frame / video counts
+    # Get Episode / frame / video counts with progress
     total_episodes_real = len(parquet_files)
 
+    tqdm.write("Counting frames in parquet files...")
     total_frames_real = 0
-    for p in parquet_files:
+    for p in tqdm(parquet_files, desc="Processing parquet files"):
         df = pd.read_parquet(p, columns=["frame_index"])
         total_frames_real += len(df)
 
@@ -88,10 +94,11 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
     errors = check_field("total_frames", total_frames_real, info, errors)
     errors = check_field("total_videos", total_videos_real, info, errors)
 
-    # Feature shape check (non-image)
+    # Feature shape check (non-image) with progress
+    tqdm.write("Checking non-image features...")
     sample_df = pd.read_parquet(parquet_files[0])
 
-    for feat_name, feat_info in features.items():
+    for feat_name, feat_info in tqdm(features.items(), desc="Checking features"):
         if feat_info.get("dtype") == "video":
             continue
 
@@ -123,8 +130,9 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
                     f"[FIXED] feature '{feat_name}' shape -> {real_shape}"
                 )
 
-    # Image feature vs video shape
-    for feat_name, feat_info in features.items():
+    # Image feature vs video shape with progress
+    tqdm.write("Checking video features...")
+    for feat_name, feat_info in tqdm(features.items(), desc="Checking video features"):
         if feat_info.get("dtype") != "video":
             continue
 
@@ -157,6 +165,7 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
 
     # Save if fixed
     if fix and (errors > 0):
+        tqdm.write("Saving updated info.json...")
         save_json(info_path, info)
 
     tqdm.write("\n===== SUMMARY =====")
