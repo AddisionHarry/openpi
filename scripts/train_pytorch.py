@@ -131,7 +131,7 @@ def set_seed(seed: int, local_rank: int):
 
 def build_datasets(config: _config.TrainConfig):
     # Use the unified data loader with PyTorch framework
-    data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=True)
+    data_loader, _ = _data.create_data_loader(config, framework="pytorch", shuffle=True)
     return data_loader, data_loader.data_config()
 
 
@@ -384,7 +384,7 @@ def train_loop(config: _config.TrainConfig):
     # Log sample images to wandb on first batch
     if is_main and config.wandb_enabled and not resuming:
         # Create a separate data loader for sample batch to avoid consuming the main loader
-        sample_data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=False)
+        sample_data_loader, _ = _data.create_data_loader(config, framework="pytorch", shuffle=False)
         sample_batch = next(iter(sample_data_loader))
         # Convert observation and actions to torch tensors
         observation, actions = sample_batch

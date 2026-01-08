@@ -3,7 +3,7 @@ import dataclasses
 import functools
 import logging
 import platform
-from typing import Any
+from typing import Any, Iterator, Callable, Tuple
 
 import etils.epath as epath
 import flax.nnx as nnx
@@ -12,10 +12,12 @@ import flax.traverse_util as traverse_util
 import jax
 import jax.experimental
 import jax.numpy as jnp
+from jaxtyping import Array
 import numpy as np
 import optax
 import tqdm_loggable.auto as tqdm
 import wandb
+from functools import partial
 
 import openpi.models.model as _model
 import openpi.shared.array_typing as at
@@ -193,6 +195,59 @@ def train_step(
     }
     return new_state, info
 
+@at.typecheck
+def eval_step(state: training_utils.TrainState, rng: at.KeyArrayLike, batch: tuple[_model.Observation, _model.Actions]) -> Array:
+    """
+    Run validation on the entire validation dataset and return average metrics.
+
+    Args:
+        state: train state containing model params
+        rng: random key
+        val_data_iter: iterable yielding (observation, actions)
+
+    Returns:
+        {"val_loss": avg_loss}
+    """
+    model = nnx.merge(state.model_def, state.params)
+    model.eval()
+
+    observation, actions = batch
+    observation = jax.tree.map(lambda x: jnp.array(x), observation)
+    actions = jax.tree.map(lambda x: jnp.array(x), actions)
+
+    pred = model.sample_actions(rng, observation=observation)
+    return jnp.mean(jnp.square(pred - actions))
+
+
+def evaluate_model(
+    train_state: training_utils.TrainState,
+    eval_rng: at.KeyArrayLike,
+    val_data_iter: Iterator[tuple[_model.Observation, _model.Actions]],
+    peval_step: Callable[[training_utils.TrainState, at.KeyArrayLike, tuple[_model.Observation, _model.Actions]], Array],
+    num_eval_batches: int,
+) -> Tuple[dict[str, float], at.KeyArrayLike]:
+    """
+    Run evaluation on a validation set.
+
+    Args:
+        train_state: current TrainState with model params
+        eval_rng: JAX random key for evaluation
+        val_data_iter: iterator over validation batches
+        peval_step: jit-compiled eval_step function
+        num_eval_batches: number of batches to evaluate
+    Returns:
+        dict: {"val_action_mse": avg_loss}
+    """
+    eval_losses = []
+
+    for _ in tqdm.tqdm(range(num_eval_batches), desc="Evaluating", leave=False):
+        eval_rng, step_rng = jax.random.split(eval_rng)
+        eval_batch = next(val_data_iter)
+        eval_losses.append(float(peval_step(train_state, step_rng, eval_batch)))
+
+    avg_loss = float(np.mean(eval_losses))
+    return {"val_action_mse": avg_loss}, eval_rng
+
 
 def main(config: _config.TrainConfig):
     init_logging()
@@ -207,7 +262,7 @@ def main(config: _config.TrainConfig):
     lr_fn = config.lr_schedule.create()
 
     rng = jax.random.key(config.seed)
-    train_rng, init_rng = jax.random.split(rng)
+    train_rng, init_rng, eval_rng = jax.random.split(rng, 3)
 
     mesh = sharding.make_mesh(config.fsdp_devices)
     data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
@@ -221,19 +276,27 @@ def main(config: _config.TrainConfig):
     )
     init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
 
-    data_loader = _data_loader.create_data_loader(
+    train_data_loader, val_data_loader = _data_loader.create_data_loader(
         config,
         sharding=data_sharding,
+        val_fraction=0.04,
         shuffle=True,
     )
-    data_iter = iter(data_loader)
-    batch = next(data_iter)
-    logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
+    train_data_iter, val_data_iter = iter(train_data_loader), iter(val_data_loader)
+    train_batch = next(train_data_iter)
+    num_eval_batches = 20
+    try:
+        val_dataset_len = len(val_data_loader._data_loader._data_loader.dataset)
+        batch_size = val_data_loader._data_loader._data_loader.batch_size
+        num_eval_batches = int(np.ceil(val_dataset_len // batch_size))
+    except:
+        pass
+    logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(train_batch)}")
 
     # Log images from first batch to sanity check.
     images_to_log = [
-        wandb.Image(np.concatenate([np.array(img[i]) for img in batch[0].images.values()], axis=1))
-        for i in range(min(5, len(next(iter(batch[0].images.values())))))
+        wandb.Image(np.concatenate([np.array(img[i]) for img in train_batch[0].images.values()], axis=1))
+        for i in range(min(5, len(next(iter(train_batch[0].images.values())))))
     ]
     wandb.log({"camera_views": images_to_log}, step=0)
 
@@ -242,13 +305,19 @@ def main(config: _config.TrainConfig):
     logging.info(f"Initialized train state:\n{training_utils.array_tree_to_info(train_state.params)}")
 
     if resuming:
-        train_state = _checkpoints.restore_state(checkpoint_manager, train_state, data_loader)
+        train_state = _checkpoints.restore_state(checkpoint_manager, train_state, train_data_loader)
 
     ptrain_step = jax.jit(
         functools.partial(train_step, config),
         in_shardings=(replicated_sharding, train_state_sharding, data_sharding),
         out_shardings=(train_state_sharding, replicated_sharding),
         donate_argnums=(1,),
+    )
+    peval_step = jax.jit(
+        eval_step,
+        in_shardings=(train_state_sharding, replicated_sharding, data_sharding),
+        out_shardings=None,
+        donate_argnums=(),
     )
 
     start_step = int(train_state.step)
@@ -259,15 +328,19 @@ def main(config: _config.TrainConfig):
         initial=start_step,
         total=config.num_train_steps,
         dynamic_ncols=True,
+        desc="Training",
     )
 
     infos = []
     for step in pbar:
         with sharding.set_mesh(mesh):
-            train_state, info = ptrain_step(train_rng, train_state, batch)
+            train_state, info = ptrain_step(train_rng, train_state, train_batch)
         infos.append(info)
         pbar.set_postfix(loss=f"{info['loss']:.4f}")
         if step % config.log_interval == 0:
+            eval_info, eval_rng = evaluate_model(
+                train_state, eval_rng, val_data_iter, peval_step, num_eval_batches
+            )
             jax.block_until_ready(train_state)
 
             stacked_infos = common_utils.stack_forest(infos)
@@ -275,6 +348,7 @@ def main(config: _config.TrainConfig):
 
             now = time.perf_counter()
             log_dict = dict(reduced_info)
+            log_dict.update(eval_info)
             if step != start_step:
                 steps_since_last = step - last_log_step
                 time_per_step = (now - last_log_time) / max(1, steps_since_last)
@@ -294,10 +368,10 @@ def main(config: _config.TrainConfig):
 
             wandb.log(log_dict, step=step)
             infos = []
-        batch = next(data_iter)
+        train_batch = next(train_data_iter)
 
         if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
-            _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)
+            _checkpoints.save_state(checkpoint_manager, train_state, train_data_loader, step)
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()

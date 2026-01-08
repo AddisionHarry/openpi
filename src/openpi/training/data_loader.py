@@ -3,7 +3,8 @@ import logging
 import multiprocessing
 import os
 import typing
-from typing import Literal, Protocol, SupportsIndex, TypeVar
+from itertools import islice
+from typing import Literal, Protocol, SupportsIndex, TypeVar, Tuple, Iterable
 
 import jax
 import jax.numpy as jnp
@@ -11,6 +12,7 @@ from lerobot.common.datasets import utils as lerobot_utils
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
+from torch.utils.data import Subset
 
 import openpi.models.model as _model
 import openpi.training.config as _config
@@ -236,12 +238,13 @@ def transform_iterable_dataset(
 def create_data_loader(
     config: _config.TrainConfig,
     *,
+    val_fraction: float = 0.0,
     sharding: jax.sharding.Sharding | None = None,
     shuffle: bool = False,
     num_batches: int | None = None,
     skip_norm_stats: bool = False,
     framework: Literal["jax", "pytorch"] = "jax",
-) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
+) -> Tuple[DataLoader[tuple[_model.Observation, _model.Actions]]]:
     """Create a data loader for training.
 
     Args:
@@ -260,6 +263,7 @@ def create_data_loader(
             data_config,
             action_horizon=config.model.action_horizon,
             batch_size=config.batch_size,
+            val_fraction=val_fraction,
             sharding=sharding,
             shuffle=shuffle,
             num_batches=num_batches,
@@ -271,6 +275,7 @@ def create_data_loader(
         model_config=config.model,
         action_horizon=config.model.action_horizon,
         batch_size=config.batch_size,
+        val_fraction=val_fraction,
         sharding=sharding,
         shuffle=shuffle,
         num_batches=num_batches,
@@ -287,6 +292,7 @@ def create_torch_data_loader(
     action_horizon: int,
     batch_size: int,
     *,
+    val_fraction: float = 0.0,
     sharding: jax.sharding.Sharding | None = None,
     skip_norm_stats: bool = False,
     shuffle: bool = False,
@@ -294,7 +300,7 @@ def create_torch_data_loader(
     num_workers: int = 0,
     seed: int = 0,
     framework: str = "jax",
-) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
+) -> Tuple[DataLoader[tuple[_model.Observation, _model.Actions]]]:
     """Create a data loader for training.
 
     Args:
@@ -312,8 +318,38 @@ def create_torch_data_loader(
             execute in the main process.
         seed: The seed to use for shuffling the data.
     """
+    def split_dataset(dataset: Dataset, val_fraction: float = 0.1, seed: int = 0):
+        """
+        Split a dataset into training and validation subsets.
+
+        Args:
+            dataset: full dataset
+            val_fraction: fraction of dataset to use as validation
+            seed: random seed for reproducibility
+
+        Returns:
+            train_dataset, val_dataset
+        """
+        length = len(dataset)
+        indices = list(range(length))
+        rng = np.random.default_rng(seed)
+        rng.shuffle(indices)
+
+        val_size = int(length * val_fraction)
+        val_indices = indices[:val_size]
+        train_indices = indices[val_size:]
+
+        train_dataset = Subset(dataset, train_indices)
+        val_dataset = Subset(dataset, val_indices)
+        return train_dataset, val_dataset
     dataset = create_torch_dataset(data_config, action_horizon, model_config)
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
+
+    # Split dataset if needed
+    if val_fraction > 0:
+        train_dataset, val_dataset = split_dataset(dataset, val_fraction=val_fraction, seed=seed)
+    else:
+        train_dataset, val_dataset = dataset, None
 
     # Use TorchDataLoader for both frameworks
     # For PyTorch DDP, create DistributedSampler and divide batch size by world size
@@ -322,7 +358,7 @@ def create_torch_data_loader(
     if framework == "pytorch":
         if torch.distributed.is_initialized():
             sampler = torch.utils.data.distributed.DistributedSampler(
-                dataset,
+                train_dataset,
                 num_replicas=torch.distributed.get_world_size(),
                 rank=torch.distributed.get_rank(),
                 shuffle=shuffle,
@@ -335,11 +371,11 @@ def create_torch_data_loader(
         local_batch_size = batch_size // jax.process_count()
 
     logging.info(f"local_batch_size: {local_batch_size}")
-    data_loader = TorchDataLoader(
-        dataset,
-        local_batch_size=local_batch_size,
+    train_loader = TorchDataLoader(
+        train_dataset,
+        local_batch_size,
         sharding=None if framework == "pytorch" else sharding,
-        shuffle=(sampler is None and shuffle),  # Don't shuffle if using sampler
+        shuffle=(sampler is None and shuffle),
         sampler=sampler,
         num_batches=num_batches,
         num_workers=num_workers,
@@ -347,7 +383,22 @@ def create_torch_data_loader(
         framework=framework,
     )
 
-    return DataLoaderImpl(data_config, data_loader)
+    val_loader = None
+    if val_dataset is not None:
+        val_loader = TorchDataLoader(
+            val_dataset,
+            local_batch_size,
+            sharding=None if framework == "pytorch" else sharding,
+            shuffle=False,
+            sampler=None,
+            num_batches=None,
+            num_workers=num_workers,
+            seed=seed,
+            framework=framework,
+        )
+
+    return DataLoaderImpl(data_config, train_loader), \
+        DataLoaderImpl(data_config, val_loader) if val_loader is not None else None
 
 
 def create_rlds_data_loader(
@@ -355,12 +406,13 @@ def create_rlds_data_loader(
     action_horizon: int,
     batch_size: int,
     *,
+    val_fraction: float = 0.0,
     sharding: jax.sharding.Sharding | None = None,
     skip_norm_stats: bool = False,
     shuffle: bool = False,
     num_batches: int | None = None,
     framework: str = "jax",
-) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
+) -> Tuple[DataLoader[tuple[_model.Observation, _model.Actions]]]:
     """Create an RLDS data loader for training.
 
     Note: This data loader requires some extra dependencies -- see examples/droid/README_train.md
@@ -382,13 +434,25 @@ def create_rlds_data_loader(
     dataset = create_rlds_dataset(data_config, action_horizon, batch_size, shuffle=shuffle)
     dataset = transform_iterable_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats, is_batched=True)
 
-    data_loader = RLDSDataLoader(
-        dataset,
-        sharding=sharding,
-        num_batches=num_batches,
-    )
+    def split_iterable_dataset(dataset: Iterable, val_fraction: float = 0.1, seed: int = 0) -> Tuple[Iterable, Iterable]:
+        rng = np.random.default_rng(seed)
+        buffer = list(islice(dataset, 10000))
+        rng.shuffle(buffer)
+        val_size = int(len(buffer) * val_fraction)
+        val_data = buffer[:val_size]
+        train_data = buffer[val_size:]
+        return iter(train_data), iter(val_data)
 
-    return DataLoaderImpl(data_config, data_loader)
+    if val_fraction > 0:
+        train_iter, val_iter = split_iterable_dataset(dataset, val_fraction=val_fraction)
+        train_loader = RLDSDataLoader(train_iter, sharding=sharding, num_batches=num_batches)
+        val_loader = RLDSDataLoader(val_iter, sharding=sharding, num_batches=None)
+    else:
+        train_loader = RLDSDataLoader(dataset, sharding=sharding, num_batches=num_batches)
+        val_loader = None
+
+    return DataLoaderImpl(data_config, train_loader), \
+        DataLoaderImpl(data_config, val_loader) if val_loader is not None else None
 
 
 class TorchDataLoader:

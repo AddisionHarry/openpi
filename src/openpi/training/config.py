@@ -1937,10 +1937,10 @@ _CONFIGS = [
         # dataset. For your own dataset, you can change the repo_id to point to your dataset.
         # Also modify the DataConfig to use the new config you made for your dataset above.
         data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/pi0_industrial_sorting_joint_waist_manually_cleaned20251224_30fps",
+            repo_id="zj-humanoid/pi0_industrial_sorting_joint_waist_manually_cleaned20251224_video_downsample",
             assets=AssetsConfig(
                 assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251214"),
-                asset_id="pi0_industrial_sorting_joint_waist_manually_cleaned20251224_30fps",
+                asset_id="pi0_industrial_sorting_joint_waist_manually_cleaned20251224_video_downsample",
             ),
             base_config=DataConfig(
                 # This flag determines whether we load the prompt (i.e. the task instruction) from the
@@ -1968,11 +1968,11 @@ _CONFIGS = [
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
         num_train_steps=30_000,
-        log_interval=25,
+        log_interval=50,
         save_interval=1000,
         keep_period=20_000,
         batch_size=64,
-        num_workers=1,
+        num_workers=8,
         force_offline_dataset=True,
         # wandb_enabled=False,
     ),

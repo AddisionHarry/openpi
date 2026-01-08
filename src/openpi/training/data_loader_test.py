@@ -50,7 +50,7 @@ def test_torch_data_loader_parallel():
 def test_with_fake_dataset():
     config = _config.get_config("debug")
 
-    loader = _data_loader.create_data_loader(config, skip_norm_stats=True, num_batches=2)
+    loader, _ = _data_loader.create_data_loader(config, skip_norm_stats=True, num_batches=2)
     batches = list(loader)
 
     assert len(batches) == 2
@@ -66,7 +66,7 @@ def test_with_real_dataset():
     config = _config.get_config("pi0_aloha_sim")
     config = dataclasses.replace(config, batch_size=4)
 
-    loader = _data_loader.create_data_loader(
+    loader, _ = _data_loader.create_data_loader(
         config,
         # Skip since we may not have the data available.
         skip_norm_stats=True,
