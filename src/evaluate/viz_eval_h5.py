@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument("--top-k", type=int, default=5, help="Number of worst episodes to visualize")
     parser.add_argument("--chunk-stride", type=int, default=1,
                         help="Stride for drawing action chunks (e.g., 10 draws chunks at steps 0,10,20,...)")
+    # parser.add_argument("--resample-k", type=int, default=5, help="Number of worst episodes to visualize")
     return parser.parse_args()
 
 
@@ -154,8 +155,8 @@ def main():
     top_k = min(args.top_k, len(order))
     worst_eps = episode_idx[order[:top_k]]
 
-    resample_ratio = 3
-    # resample_ratio = load_config_from_h5(h5_path).get('resample_ratio', 1)
+    # resample_ratio = 3
+    resample_ratio = load_config_from_h5(h5_path).get('resample_ratio', 1)
     with h5py.File(h5_path, "r") as f:
         for ep in tqdm(worst_eps, desc="Processing episodes", dynamic_ncols=True):
             ep_name = f"episode_{ep:06d}"; grp = f[ep_name]

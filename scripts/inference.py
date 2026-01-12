@@ -181,7 +181,7 @@ def main():
     print("Start loading model from checkpoint.")
     policy = policy_config.create_trained_policy(cfg, args.model_path)
     assert policy is not None
-    print("Loaded model from checkpoint...")
+    print("Loaded model from checkpoint, start first inference...")
     first_obs = make_zj_humanoid_example(cfg.data.use_arms, cfg.data.use_tcp_pose,
                                    cfg.data.use_wrist_cameras, cfg.data.obs_use_waist_angles)
     policy.infer(first_obs)

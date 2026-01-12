@@ -470,6 +470,19 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
         )
 
+ZJ_HUMANOID_JOINT_SLICES = {
+    "left_tcp": slice(38, 45),
+    "right_tcp": slice(45, 52),
+
+    # "right_arm_joint": slice(0, 7),
+    # "left_arm_joint": slice(7, 14),
+    "left_arm_joint": slice(0, 7),
+    "right_arm_joint": slice(7, 14),
+
+    "left_hand_joint": slice(52, 58),
+    "right_hand_joint": slice(58, 64),
+    "waist_joint": slice(16, 18),
+}
 
 class SplitStateTransform:
     def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False, use_waist_angles: bool = False):
@@ -481,20 +494,20 @@ class SplitStateTransform:
         state = data["observation.state"]
         if self.use_arms[0]:
             if self.use_tcp_pose:
-                data["observation/end_effector/left_tcp"] = state[38:45]
+                data["observation/end_effector/left_tcp"] = state[ZJ_HUMANOID_JOINT_SLICES["left_tcp"]]
             else:
-                data["observation/left_arm_joint_position"] = state[7:14]
-            data["observation/left_hand_joint_position"] = state[52:58]
+                data["observation/left_arm_joint_position"] = state[ZJ_HUMANOID_JOINT_SLICES["left_arm_joint"]]
+            data["observation/left_hand_joint_position"] = state[ZJ_HUMANOID_JOINT_SLICES["left_hand_joint"]]
         if self.use_arms[1]:
             if self.use_tcp_pose:
-                data["observation/end_effector/right_tcp"] = state[45:52]
+                data["observation/end_effector/right_tcp"] = state[ZJ_HUMANOID_JOINT_SLICES["right_tcp"]]
             else:
-                data["observation/right_arm_joint_position"] = state[0:7]
-            data["observation/right_hand_joint_position"] = state[58:64]
+                data["observation/right_arm_joint_position"] = state[ZJ_HUMANOID_JOINT_SLICES["right_arm_joint"]]
+            data["observation/right_hand_joint_position"] = state[ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
         if not self.use_arms[0] and not self.use_arms[1]:
             raise ValueError("At least one arm must be used.")
         if self.use_waist_angles:
-            data["observation/waist_joint_position"] = state[16:18]
+            data["observation/waist_joint_position"] = state[ZJ_HUMANOID_JOINT_SLICES["waist_joint"]]
         return data
 
 class PackActionTransform:
@@ -503,29 +516,31 @@ class PackActionTransform:
         self.use_tcp_pose = use_tcp_pose
 
     def __call__(self, data):
-        arm_target_slice = [slice(38, 45), slice(45, 52)] if self.use_tcp_pose else \
-            [slice(7, 14), slice(0, 7)]
         if self.use_arms[0] and not self.use_arms[1]:
             # Left arm joints + left hand joints
-            left_arm_joints = data["actions"][:, arm_target_slice[0]]
-            left_hand_joints = data["teleoperate_action_states"][0:6]
-            left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+            left_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_arm_joint"]]
+            # left_hand_joints = data["teleoperate_action_states"][0:6]
+            # left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+            left_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_hand_joint"]]
             data["actions"] = torch.cat([left_arm_joints, left_hand_joints], dim=1)
         elif not self.use_arms[0] and self.use_arms[1]:
             # Right arm joints + right hand joints
-            right_arm_joints = data["actions"][:, arm_target_slice[1]]
-            right_hand_joints = data["teleoperate_action_states"][6:12]
-            right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+            right_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_arm_joint"]]
+            # right_hand_joints = data["teleoperate_action_states"][6:12]
+            # right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+            right_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
             data["actions"] = torch.cat([right_arm_joints, right_hand_joints], dim=1)
         elif self.use_arms[0] and self.use_arms[1]:
             # Left arm joints + left hand joints + right arm joints + right hand joints
-            left_arm_joints = data["actions"][:, arm_target_slice[0]]
-            left_hand_joints = data["teleoperate_action_states"][0:6]
-            left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+            left_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_arm_joint"]]
+            # left_hand_joints = data["teleoperate_action_states"][0:6]
+            # left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+            left_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_hand_joint"]]
 
-            right_arm_joints = data["actions"][:, arm_target_slice[1]]
-            right_hand_joints = data["teleoperate_action_states"][6:12]
-            right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+            right_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_arm_joint"]]
+            # right_hand_joints = data["teleoperate_action_states"][6:12]
+            # right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+            right_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
 
             data["actions"] = torch.cat([left_arm_joints, left_hand_joints, right_arm_joints, right_hand_joints], dim=1)
         elif not self.use_arms[0] and not self.use_arms[1]:
@@ -1041,6 +1056,8 @@ class TrainConfig:
     fsdp_devices: int = 1
 
     force_offline_dataset: bool = False
+
+    val_fraction: float = 0.0
 
     @property
     def assets_dirs(self) -> pathlib.Path:
@@ -1974,6 +1991,111 @@ _CONFIGS = [
         batch_size=64,
         num_workers=8,
         force_offline_dataset=True,
+        val_fraction=0.04,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi0_breaker_placement_joint_20260108",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_breaker_placement/zj-humanoid/breaker_placement_20260108"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=False),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi0_breaker_placement_joint_20260108",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_breaker_placement/zj-humanoid/breaker_placement_20260108"),
+                asset_id="pi0_breaker_placement_joint_20260108",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=False,
+            action_use_waist_angles=False
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=3e-4,
+            decay_steps=25_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=30_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.1,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi0_industrial_sorting_joint_20260109",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260107"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=False),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi0_industrial_sorting_joint_20260109",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260107"),
+                asset_id="pi0_industrial_sorting_joint_20260109",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=True
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=3e-4,
+            decay_steps=25_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=30_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.04,
         # wandb_enabled=False,
     ),
     TrainConfig(

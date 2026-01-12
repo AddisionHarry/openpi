@@ -318,36 +318,49 @@ def create_torch_data_loader(
             execute in the main process.
         seed: The seed to use for shuffling the data.
     """
-    def split_dataset(dataset: Dataset, val_fraction: float = 0.1, seed: int = 0):
+    def split_dataset_by_episode(dataset: Dataset, val_fraction: float, seed: int):
         """
-        Split a dataset into training and validation subsets.
-
-        Args:
-            dataset: full dataset
-            val_fraction: fraction of dataset to use as validation
-            seed: random seed for reproducibility
+        Split LeRobotDataset by episode boundaries to avoid leakage.
 
         Returns:
-            train_dataset, val_dataset
+            train_subset, val_subset
         """
-        length = len(dataset)
-        indices = list(range(length))
+        assert hasattr(dataset, "_dataset") and isinstance(dataset._dataset, TransformedDataset)
+        assert isinstance(dataset._dataset._dataset, lerobot_dataset.LeRobotDataset)
+        num_episodes = dataset._dataset._dataset.num_episodes
+
+        # Random shuffle episode indices
         rng = np.random.default_rng(seed)
-        rng.shuffle(indices)
+        episode_ids = list(range(num_episodes))
+        rng.shuffle(episode_ids)
 
-        val_size = int(length * val_fraction)
-        val_indices = indices[:val_size]
-        train_indices = indices[val_size:]
+        val_size = int(len(episode_ids) * val_fraction)
+        train_episodes = episode_ids[val_size:]
 
-        train_dataset = Subset(dataset, train_indices)
-        val_dataset = Subset(dataset, val_indices)
-        return train_dataset, val_dataset
+        train_frame_indices = []
+        val_frame_indices = []
+
+        episode_index = dataset._dataset._dataset.episode_data_index
+        from_indices = episode_index["from"].tolist()
+        to_indices = episode_index["to"].tolist()
+        for ep_id in range(len(from_indices)):
+            start = from_indices[ep_id]
+            end = to_indices[ep_id]
+            if ep_id in train_episodes:
+                train_frame_indices.extend(range(start, end))
+            else:
+                val_frame_indices.extend(range(start, end))
+
+        train_subset = Subset(dataset, train_frame_indices)
+        val_subset = Subset(dataset, val_frame_indices)
+
+        return train_subset, val_subset
     dataset = create_torch_dataset(data_config, action_horizon, model_config)
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
 
     # Split dataset if needed
     if val_fraction > 0:
-        train_dataset, val_dataset = split_dataset(dataset, val_fraction=val_fraction, seed=seed)
+        train_dataset, val_dataset = split_dataset_by_episode(dataset, val_fraction=val_fraction, seed=seed)
     else:
         train_dataset, val_dataset = dataset, None
 

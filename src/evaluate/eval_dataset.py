@@ -36,8 +36,10 @@ from openpi.policies.zj_humanoid_policy import make_zj_humanoid_example
 ACTION_IDX = {
     "left_arm_tcp":   (38, 45),
     "right_arm_tcp":  (45, 52),
-    "left_arm_joint": (7, 14),
-    "right_arm_joint":(0, 7),
+    # "left_arm_joint": (7, 14),
+    # "right_arm_joint":(0, 7),
+    "left_arm_joint": (0, 7),
+    "right_arm_joint":(7, 14),
     "left_hand":      (52, 58),
     "right_hand":     (58, 64),
     "waist":          (16, 18),

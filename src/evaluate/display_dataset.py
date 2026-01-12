@@ -17,8 +17,10 @@ PACK_LEN_INDICATOR_LEN = 4
 ACTION_IDX = {
     "left_arm_tcp":   (38, 45),
     "right_arm_tcp":  (45, 52),
-    "left_arm_joint": (7, 14),
-    "right_arm_joint":(0, 7),
+    # "left_arm_joint": (7, 14),
+    # "right_arm_joint":(0, 7),
+    "left_arm_joint": (0, 7),
+    "right_arm_joint":(7, 14),
     "left_hand":      (52, 58),
     "right_hand":     (58, 64),
     "waist":          (16, 18),
@@ -61,7 +63,7 @@ def load_action_names(dataset_root: str):
     info_path = Path(dataset_root) / "meta" / "info.json"
     with open(info_path, "r") as f:
         info = json.load(f)
-    return info["features"]["action"]["names"]
+    return info["features"]["actions"]["names"]
 
 def load_single_episode(dataset_root: str, episode_idx: int):
     root = Path(dataset_root)
@@ -131,10 +133,7 @@ def get_action_segment_names(action_names, use_arms, use_waist_angles, use_tcp_p
 def main():
     args = parse_args()
 
-    episode_actions = load_single_episode(
-        dataset_root=args.dataset_dir,
-        episode_idx=args.episode_index
-    )
+    episode_actions = load_single_episode(args.dataset_dir, args.episode_index)
     episode_len = len(episode_actions)
     segment_names = get_action_segment_names(
         load_action_names(args.dataset_dir),
@@ -154,7 +153,7 @@ def main():
             conn, addr = s.accept()
             print(f"[Server] Connected by {addr}")
             base_timestamp = None
-            last_recv_walltime = 0
+            last_recv_walltime = time.time()
             try:
                 conn.settimeout(0.1)
                 while True:
@@ -168,16 +167,21 @@ def main():
                     last_recv_walltime = recv_time
                     if (time_since_last >= 10.0) or (base_timestamp is None):
                         print(f"[Server] {time_since_last:.1f}s no message, sending first frame actions.")
-                        base_timestamp = message["timestamp"]
+                        base_timestamp = "wait for startup"
                         action = pack_real_action(episode_actions[0], args.use_arms, args.use_waist_angles, args.use_tcp_pose)
                         actions_list = [action] * args.chunk_size
                         response = json.dumps({
                             "predicted_action": actions_list,
-                            "timestamp": message["timestamp"]
+                            "timestamp": message["timestamp"],
+                            "slow_move": True
                         })
+                        print("[Server] Set to slow move.")
                         body = response.encode("utf-8")
                         conn.sendall(HEADER + struct.pack("!I", len(body)) + body)
                         continue
+                    elif isinstance(base_timestamp, str):
+                        print("[Server] Slow move finished.")
+                        base_timestamp = message["timestamp"]
                     current_ts = message["timestamp"]
                     dt = current_ts - base_timestamp
                     idx = int(np.ceil(dt * args.dataset_action_fps))
@@ -194,7 +198,8 @@ def main():
                             window.append(action)
                     response = json.dumps({
                         "predicted_action": window,
-                        "timestamp": message["timestamp"]
+                        "timestamp": message["timestamp"],
+                        "slow_move": False
                     })
                     body = response.encode("utf-8")
                     conn.sendall(HEADER + struct.pack("!I", len(body)) + body)
