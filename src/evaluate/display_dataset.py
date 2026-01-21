@@ -23,7 +23,7 @@ ACTION_IDX = {
     "right_arm_joint":(7, 14),
     "left_hand":      (52, 58),
     "right_hand":     (58, 64),
-    "waist":          (16, 18),
+    "waist":          (17, 19),
 }
 
 def parse_args():

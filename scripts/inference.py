@@ -112,8 +112,6 @@ def recv_packet(conn: socket.socket) -> dict:
 
 def unparse_observation(message: Dict, device: str) -> Dict:
     # parse image
-    # head_right_image = parse_image_from_message_np(message['head_right_rgb'], device, image_format='rgb', dtype='float')
-    # head_left_image = parse_image_from_message_np(message['head_left_rgb'], device, image_format='rgb', dtype='float')
     chest_image = parse_image_from_message_np(message['chest_rgb'], device, image_format='rgb', dtype='float')
     right_wrist_image = parse_image_from_message_np(message['wrist_right_image'], device, image_format='rgb', dtype='float')
     left_wrist_image = parse_image_from_message_np(message['wrist_left_image'], device, image_format='rgb', dtype='float')

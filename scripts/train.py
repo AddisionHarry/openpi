@@ -279,18 +279,20 @@ def main(config: _config.TrainConfig):
     train_data_loader, val_data_loader = _data_loader.create_data_loader(
         config,
         sharding=data_sharding,
-        val_fraction=0.04,
+        val_fraction=0.04 if not hasattr(config, "val_fraction") else config.val_fraction,
         shuffle=True,
     )
-    train_data_iter, val_data_iter = iter(train_data_loader), iter(val_data_loader)
+    train_data_iter = iter(train_data_loader)
+    val_data_iter = iter(val_data_loader) if val_data_loader else None
     train_batch = next(train_data_iter)
     num_eval_batches = 20
-    try:
-        val_dataset_len = len(val_data_loader._data_loader._data_loader.dataset)
-        batch_size = val_data_loader._data_loader._data_loader.batch_size
-        num_eval_batches = int(np.ceil(val_dataset_len // batch_size))
-    except:
-        pass
+    if val_data_loader:
+        try:
+            val_dataset_len = len(val_data_loader._data_loader._data_loader.dataset)
+            batch_size = val_data_loader._data_loader._data_loader.batch_size
+            num_eval_batches = int(np.ceil(val_dataset_len // batch_size))
+        except:
+            pass
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(train_batch)}")
 
     # Log images from first batch to sanity check.
@@ -338,9 +340,10 @@ def main(config: _config.TrainConfig):
         infos.append(info)
         pbar.set_postfix(loss=f"{info['loss']:.4f}")
         if step % config.log_interval == 0:
-            eval_info, eval_rng = evaluate_model(
-                train_state, eval_rng, val_data_iter, peval_step, num_eval_batches
-            )
+            if val_data_loader:
+                eval_info, eval_rng = evaluate_model(
+                    train_state, eval_rng, val_data_iter, peval_step, num_eval_batches
+                )
             jax.block_until_ready(train_state)
 
             stacked_infos = common_utils.stack_forest(infos)
@@ -348,7 +351,8 @@ def main(config: _config.TrainConfig):
 
             now = time.perf_counter()
             log_dict = dict(reduced_info)
-            log_dict.update(eval_info)
+            if val_data_loader:
+                log_dict.update(eval_info)
             if step != start_step:
                 steps_since_last = step - last_log_step
                 time_per_step = (now - last_log_time) / max(1, steps_since_last)

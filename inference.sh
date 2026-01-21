@@ -22,17 +22,17 @@ if [ $TEST_DISPLAY -eq 1 ]; then
         --port 10043 \
         --chunk-size 50 \
         --dataset-action-fps 30 \
-        --dataset-dir "/root/openpi/assets/pi0_zjhumanoid_breaker_placement/zj-humanoid/breaker_placement_20260108/pi0_breaker_placement_joint_20260108" \
+        --dataset-dir "/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260112/pi0_industrial_sorting_joint_20260112" \
         --episode-index 10 \
         --use-arms "[False, True]" \
-        --use-waist-angles False \
+        --use-waist-angles True \
         --use-tcp-pose False
 else
     echo "[INFO] Normal inference server.py"
     CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
         uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
-        --model_path /root/openpi/checkpoints/pi0_breaker_placement_joint_20260108/pi0_breaker_placement_20260109/25000 \
+        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_20260112/pi0_industrrial_sorting_20260117/30000 \
         --device cuda:0 \
-        --config_name pi0_breaker_placement_joint_20260108 \
+        --config_name pi0_industrial_sorting_joint_20260112 \
         --port 10043
 fi

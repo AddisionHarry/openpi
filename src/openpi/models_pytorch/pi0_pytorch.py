@@ -1,10 +1,13 @@
 import logging
 import math
+import copy
 
 import torch
 from torch import Tensor
 from torch import nn
 import torch.nn.functional as F  # noqa: N812
+
+from typing import Dict, Tuple, List, Union
 
 import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
@@ -124,6 +127,10 @@ class PI0Pytorch(nn.Module):
         except ImportError:
             raise ValueError(msg) from None
 
+        self.atten_maps = {"VLM_Inference": None, "Action_Generate": None, }
+        self.token_annotations = {"VLM_Inference": {"image_tokens": None, "language_tokens": None},
+                                   "Action_Generate": {"action_tokens": None, "state_tokens": None, "vlm_tokens_first": True}}
+
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
@@ -210,6 +217,9 @@ class PI0Pytorch(nn.Module):
             # Create attention masks so that image tokens attend to each other
             att_masks += [0] * num_img_embs
 
+        image_end = sum([emb.shape[1] for emb in embs])
+        self.token_annotations["VLM_Inference"]["image_tokens"] = slice(0, image_end)
+
         # Process language tokens
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
@@ -217,6 +227,8 @@ class PI0Pytorch(nn.Module):
             return lang_emb * math.sqrt(lang_emb_dim)
 
         lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
+
+        self.token_annotations["VLM_Inference"]["language_tokens"] = slice(image_end, image_end + lang_emb.shape[1])
 
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
@@ -241,6 +253,7 @@ class PI0Pytorch(nn.Module):
         pad_masks = []
         att_masks = []
 
+        current_pos = 0
         if not self.pi05:
             if self.state_proj.weight.dtype == torch.float32:
                 state = state.to(torch.float32)
@@ -260,6 +273,8 @@ class PI0Pytorch(nn.Module):
 
             # Set attention masks so that image and language inputs do not attend to state or actions
             att_masks += [1]
+            self.token_annotations["Action_Generate"]["state_tokens"] = slice(current_pos, current_pos + state_emb.shape[0])
+            current_pos += state_emb.shape[0]
 
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
@@ -303,6 +318,10 @@ class PI0Pytorch(nn.Module):
         bsize, action_time_dim = action_time_emb.shape[:2]
         action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
         pad_masks.append(action_time_mask)
+
+        self.token_annotations["Action_Generate"]["action_tokens"] = slice(current_pos, current_pos + action_time_dim)
+        self.token_annotations["Action_Generate"]["vlm_tokens_first"] = True
+        current_pos += action_time_dim
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.action_horizon - 1))
@@ -374,7 +393,7 @@ class PI0Pytorch(nn.Module):
         return F.mse_loss(u_t, v_t, reduction="none")
 
     @torch.no_grad()
-    def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
+    def sample_actions(self, device, observation, noise=None, num_steps=10, output_attentions: bool = False) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
         if noise is None:
@@ -397,13 +416,17 @@ class PI0Pytorch(nn.Module):
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
+            output_attentions=output_attentions
         )
+        if output_attentions:
+            self.atten_maps["VLM_Inference"] = copy.deepcopy(self.paligemma_with_expert.get_atten_map())
 
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        self.atten_maps["Action_Generate"] = []
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
@@ -412,11 +435,14 @@ class PI0Pytorch(nn.Module):
                 past_key_values,
                 x_t,
                 expanded_time,
+                output_attentions=output_attentions
             )
 
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
+            if output_attentions:
+                self.atten_maps["Action_Generate"].append(copy.deepcopy(self.paligemma_with_expert.get_atten_map()))
         return x_t
 
     def denoise_step(
@@ -426,6 +452,7 @@ class PI0Pytorch(nn.Module):
         past_key_values,
         x_t,
         timestep,
+        output_attentions: bool = False
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
@@ -454,9 +481,13 @@ class PI0Pytorch(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=False,
             adarms_cond=[None, adarms_cond],
+            output_attentions=output_attentions
         )
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
+
+    def get_atten_maps(self) -> Tuple[Dict[str, Union[Tuple, List[Tuple]]], Dict[str, Dict]]:
+        return self.atten_maps, self.token_annotations

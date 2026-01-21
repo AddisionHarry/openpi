@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Tuple
 
 import pytest
 import torch
@@ -58,6 +58,8 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 
+        self.attention_map = None
+
         self.to_bfloat16_for_selected_params(precision)
 
     def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
@@ -88,6 +90,9 @@ class PaliGemmaWithExpertModel(nn.Module):
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.language_model.embed_tokens(tokens)
 
+    def get_atten_map(self) -> Tuple[torch.Tensor]:
+        return self.attention_map
+
     def forward(
         self,
         attention_mask: torch.Tensor | None = None,
@@ -96,6 +101,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         inputs_embeds: list[torch.FloatTensor] | None = None,
         use_cache: bool | None = None,
         adarms_cond: list[torch.Tensor] | None = None,
+        output_attentions: bool = False
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
@@ -107,8 +113,10 @@ class PaliGemmaWithExpertModel(nn.Module):
                 past_key_values=past_key_values,
                 use_cache=use_cache,
                 adarms_cond=adarms_cond[0] if adarms_cond is not None else None,
+                output_attentions=output_attentions
             )
             prefix_past_key_values = prefix_output.past_key_values
+            self.attention_map = prefix_output.attentions
             prefix_output = prefix_output.last_hidden_state
             suffix_output = None
         elif inputs_embeds[0] is None:
@@ -119,7 +127,9 @@ class PaliGemmaWithExpertModel(nn.Module):
                 past_key_values=past_key_values,
                 use_cache=use_cache,
                 adarms_cond=adarms_cond[1] if adarms_cond is not None else None,
+                output_attentions=output_attentions
             )
+            self.attention_map = suffix_output.attentions
             suffix_output = suffix_output.last_hidden_state
             prefix_output = None
             prefix_past_key_values = None
@@ -198,7 +208,7 @@ class PaliGemmaWithExpertModel(nn.Module):
                 scaling = self.paligemma.language_model.layers[layer_idx].self_attn.scaling
 
                 # Attention computation
-                att_output, _ = modeling_gemma.eager_attention_forward(
+                att_output, attn_weights = modeling_gemma.eager_attention_forward(
                     self.paligemma.language_model.layers[layer_idx].self_attn,
                     query_states,
                     key_states,
@@ -206,6 +216,8 @@ class PaliGemmaWithExpertModel(nn.Module):
                     attention_mask,
                     scaling,
                 )
+                if output_attentions and not torch.is_grad_enabled():
+                    self.attention_map[layer_idx] = attn_weights
                 # Get head_dim from the current layer, not from the model
                 head_dim = self.paligemma.language_model.layers[layer_idx].self_attn.head_dim
                 att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
@@ -238,6 +250,7 @@ class PaliGemmaWithExpertModel(nn.Module):
                 return outputs_embeds
 
             # Process all layers with gradient checkpointing if enabled
+            self.attention_map = [None for _ in range(num_layers)]
             for layer_idx in range(num_layers):
                 if use_gradient_checkpointing:
                     inputs_embeds = torch.utils.checkpoint.checkpoint(
@@ -256,6 +269,8 @@ class PaliGemmaWithExpertModel(nn.Module):
                     )
 
                 # Old code removed - now using compute_layer_complete function above
+
+            self.attention_map = tuple(self.attention_map)
 
             # final norm
             # Define final norm computation function for gradient checkpointing

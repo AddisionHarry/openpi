@@ -42,11 +42,8 @@ ACTION_IDX = {
     "right_arm_joint":(7, 14),
     "left_hand":      (52, 58),
     "right_hand":     (58, 64),
-    "waist":          (16, 18),
+    "waist":          (17, 19),
 }
-
-IMAGE_WIDTH = 640
-IMAGE_HEIGHT = 480
 
 
 def parse_args():
@@ -135,7 +132,6 @@ class EpisodeDataIterator:
                 if not ret:
                     break
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = cv2.resize(frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
                 frames.append(frame)
             cap.release()
             self.video_frames[cam_name] = frames
@@ -156,8 +152,7 @@ class EpisodeDataIterator:
         ret, frame = cap.read()
         if not ret:
             raise RuntimeError(f"Failed to read frame {step} from {cam_name} video")
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        return cv2.resize(frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     def _read_single_step(self, step: int) -> dict:
         if step < 0 or step >= self.episode_len:

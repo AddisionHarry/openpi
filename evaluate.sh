@@ -104,7 +104,8 @@ echo "  INFERENCE_RES_FREQ       = ${INFERENCE_RES_FREQ}"
 echo "Will evaluate steps: ${STEPS[@]}"
 echo
 
-for STEP in "${STEPS[@]}"; do
+for ((i=${#STEPS[@]}-1; i>=0; i--)); do
+  STEP="${STEPS[i]}"
   MODEL_PATH="${MODEL_ROOT}/${STEP}"
   OUTPUT_PATH="${MODEL_ROOT}/eval_results/${STEP}/evaluate.h5"
   mkdir -p "$(dirname "${OUTPUT_PATH}")"
@@ -136,6 +137,9 @@ for STEP in "${STEPS[@]}"; do
     --h5-path "${OUTPUT_PATH}" \
     --out-dir "${MODEL_ROOT}/eval_results/${STEP}/viz" \
     --top-k 30 --chunk-stride 10
+
+  uv run /root/openpi/src/evaluate/viz_train_mse.py --eval-dir "${MODEL_ROOT}/eval_results
+
 done
 
 # DEBUG_MODE=1 CUDA_VISIBLE_DEVICES=1 uv run python3 /root/openpi/src/evaluate/eval_dataset.py \
