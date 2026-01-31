@@ -102,6 +102,8 @@ class Pi0(_model.BaseModel):
         # This attribute gets automatically set by model.train() and model.eval().
         self.deterministic = True
 
+        self._debug_batch_counter = 0
+
     @at.typecheck
     def embed_prefix(
         self, obs: _model.Observation
@@ -185,12 +187,50 @@ class Pi0(_model.BaseModel):
         ar_mask = jnp.array(ar_mask)
         return tokens, input_mask, ar_mask, adarms_cond
 
+    def debug_save_batch(self, images, key):
+        import os
+        import numpy as np
+        from PIL import Image
+        import math
+        import jax
+
+        save_dir = "viz/batch_images"
+        os.makedirs(save_dir, exist_ok=True)
+
+        # ===== batch counter（host-side）=====
+        idx = self._debug_batch_counter
+        self._debug_batch_counter += 1
+
+        # ===== to numpy =====
+        imgs = np.array(jax.device_get(images[key]))
+        imgs = np.clip(imgs * 255.0, 0, 255).astype(np.uint8)  # [B,H,W,3]
+
+        B, H, W, C = imgs.shape
+        cols = 4
+        rows = math.ceil(B / cols)
+
+        canvas = np.zeros((rows * H, cols * W, 3), dtype=np.uint8)
+
+        for i in range(B):
+            r = i // cols
+            c = i % cols
+            canvas[r * H:(r + 1) * H, c * W:(c + 1) * W] = imgs[i]
+
+        Image.fromarray(canvas).save(
+            os.path.join(save_dir, f"{key}_batch_{idx:06d}.png")
+        )
+
+        print(f"[debug] saved batch {idx} ({key}), B={B}")
+
     @override
     def compute_loss(
         self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False
     ) -> at.Float[at.Array, "*b ah"]:
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
         observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
+
+        # for key in observation.images:
+        #     jax.debug.callback(self.debug_save_batch, observation.images, key)
 
         batch_shape = actions.shape[:-2]
         noise = jax.random.normal(noise_rng, actions.shape)

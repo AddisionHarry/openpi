@@ -11,7 +11,6 @@ import base64
 import argparse
 import time
 import struct
-from collections import deque
 from typing import Tuple, Dict
 from openpi.training import config
 from openpi.policies import policy_config
@@ -19,23 +18,13 @@ from openpi.policies.zj_humanoid_policy import make_zj_humanoid_example
 
 import torch
 import cv2
-import dill
-# import hydra
 import numpy as np
-import sys
-# from utils.websocket_client_policy import WebsocketClientPolicy
-
-
-
 from pathlib import Path
-current_file_path = Path(__file__).resolve()
-parent_dir = current_file_path.parent.parent
-sys.path.append(str(parent_dir))
 
-# from diffusion_policy.workspace.train_diffusion_unet_image_isaaclab_workspace import TrainDiffusionUnetImageIsaacLabWorkspace
-# from rotation_transformer import RotationTransformer
+NEW_VERSION_INFERENCE = True
 
-HEADER = b"NAVIAI_DIFFUSION_POLICY"
+
+HEADER = b"NAVIAI_POLICY" if NEW_VERSION_INFERENCE else b"NAVIAI_DIFFUSION_POLICY"
 PACK_LEN_INDICATOR_LEN = 4
 TEST_SAVE_IMAGES = False
 
@@ -112,9 +101,9 @@ def recv_packet(conn: socket.socket) -> dict:
 
 def unparse_observation(message: Dict, device: str) -> Dict:
     # parse image
-    chest_image = parse_image_from_message_np(message['chest_rgb'], device, image_format='rgb', dtype='float')
-    right_wrist_image = parse_image_from_message_np(message['wrist_right_image'], device, image_format='rgb', dtype='float')
-    left_wrist_image = parse_image_from_message_np(message['wrist_left_image'], device, image_format='rgb', dtype='float')
+    chest_image = parse_image_from_message_np(message['chest_rgb'], device, image_format='rgb', dtype='float') if 'chest_rgb' in message else None
+    right_wrist_image = parse_image_from_message_np(message['wrist_right_image'], device, image_format='rgb', dtype='float') if 'wrist_right_image' in message else None
+    left_wrist_image = parse_image_from_message_np(message['wrist_left_image'], device, image_format='rgb', dtype='float') if 'wrist_left_image' in message else None
     # arm joints pos
     left_arm_joints_pos = np.array(message['left_arm_joint_angles']).reshape(-1)
     right_arm_joints_pos = np.array(message['right_arm_joint_angles']).reshape(-1)
@@ -122,7 +111,7 @@ def unparse_observation(message: Dict, device: str) -> Dict:
     left_hand_joints_pos = np.array(message['left_hand_joints']).reshape(-1)
     right_hand_joints_pos = np.array(message['right_hand_joints']).reshape(-1)
     # head & waist joints pos
-    # neck_joints_pos = np.array(message['head_angles']).reshape(-1)
+    neck_joints_pos = np.array(message['neck_angles']).reshape(-1)
     waist_joints_pos = np.array(message['waist_angles']).reshape(-1)[:2]
     # arm joints velocity
     # left_arm_joints_vel = np.array(message['left_arm_joint_velocities']).reshape(-1)
@@ -141,10 +130,7 @@ def unparse_observation(message: Dict, device: str) -> Dict:
 
     timestamp = message['timestamp']
 
-    return {
-        "observation/images/chest_rgb": chest_image,
-        "observation/images/left_wrist_rgb": left_wrist_image,
-        "observation/images/right_wrist_rgb": right_wrist_image,
+    obs = {
         "observation/end_effector/left_tcp": left_tcp_pose_in_chest,
         "observation/end_effector/right_tcp": right_tcp_pose_in_chest,
         "observation/left_arm_joint_position": left_arm_joints_pos,
@@ -155,6 +141,14 @@ def unparse_observation(message: Dict, device: str) -> Dict:
         "prompt": message["prompt"],
         "timestamp": timestamp,
     }
+    if chest_image is not None:
+        obs.update({"observation/images/chest_rgb": chest_image})
+    if left_wrist_image is not None:
+        obs.update({"observation/images/left_wrist_rgb": left_wrist_image})
+    if right_wrist_image is not None:
+        obs.update({"observation/images/right_wrist_rgb": right_wrist_image})
+
+    return obs
 
 def pad_to_dim(x, dim):
     x = np.asarray(x, dtype=np.float32)
@@ -162,7 +156,6 @@ def pad_to_dim(x, dim):
         return x[..., :dim]
     pad = np.zeros((dim - x.shape[-1],), dtype=np.float32)
     return np.concatenate([x, pad], axis=-1)
-
 
 
 def main():
@@ -174,7 +167,6 @@ def main():
         debugpy.wait_for_client()
         print("Debugger attached, resuming execution...")
     args = parse_args()
-    # pi0 fast
     cfg = config.get_config(args.config_name)
     print("Start loading model from checkpoint.")
     policy = policy_config.create_trained_policy(cfg, args.model_path)
@@ -217,16 +209,23 @@ def main():
                                 saved_image_count += 1
                             # Model inference
                             inference_start = time.time()
-                            # action_dict = policy.predict_action(nobs)
                             action_dict = policy.infer(obs)
 
-                            print(f"Time taken for diffusion policy inference: {(time.time() - inference_start) * 1000}ms")
+                            print(f"Time taken for policy inference: {(time.time() - inference_start) * 1000}ms")
                             # pack actions to response
                             real_actions = action_dict['actions']
-                            response = json.dumps({
-                                'predicted_action': real_actions.tolist(),
-                                "timestamp": message["timestamp"]
-                            })
+                            if NEW_VERSION_INFERENCE:
+                                response = json.dumps({
+                                    'right_arm_joint_angles': real_actions[:, :7].tolist(),
+                                    'right_hand_joints': real_actions[:, 7:13].tolist(),
+                                    'waist_angles': real_actions[:, 13:15].tolist(),
+                                    "timestamp": message["timestamp"]
+                                })
+                            else:
+                                response = json.dumps({
+                                    'predicted_action': real_actions.tolist(),
+                                    "timestamp": message["timestamp"]
+                                })
                             body = response.encode("utf-8")
                             body_len = len(body)
                             length_bytes = struct.pack("!I", body_len)

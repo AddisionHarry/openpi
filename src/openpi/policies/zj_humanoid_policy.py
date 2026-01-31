@@ -137,6 +137,11 @@ class ZJHumanoidInputs(transforms.DataTransformFn):
             },
         }
 
+        if "hand_align_state" in data:
+            inputs["hand_align_state"] = 1
+        if "hand_align_state_chest_image_mask_prob" in data:
+            inputs["chest_image_mask_prob"] = data["hand_align_state_chest_image_mask_prob"]
+
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:

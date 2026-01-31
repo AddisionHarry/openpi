@@ -21,114 +21,93 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import argparse
-from typing import List, Tuple
+
 
 def extract_step_from_name(name: str) -> int:
-    """Extract training step integer from folder name."""
+    """Extract integer training step from folder name."""
     return int(name)
 
-def load_mse_from_h5(h5_path: Path) -> np.ndarray:
-    """
-    Load MSE data from an evaluate.h5 file.
+def load_episode_mse(h5_path: Path) -> np.ndarray | None:
+    """Load episode MSE from evaluate.h5, skip if missing or invalid."""
+    try:
+        with h5py.File(h5_path, "r") as f:
+            if "episode_mse_summary/mean" not in f:
+                print(f"[WARN] Missing episode_mse_summary/mean in {h5_path}")
+                return None
+            mse = np.asarray(f["episode_mse_summary/mean"][:], dtype=np.float64)
+            mse = mse[np.isfinite(mse)]
+            if mse.size == 0:
+                print(f"[WARN] Empty or NaN-only MSE in {h5_path}")
+                return None
+            return mse
+    except Exception as e:
+        print(f"[WARN] Failed to read {h5_path}: {e}")
+        return None
 
-    Args:
-        h5_path (Path): Path to the HDF5 file.
 
-    Returns:
-        np.ndarray: 1D array of MSE values.
-    """
-    with h5py.File(h5_path, "r") as f:
-        if "episode_mse_summary/mean" in f:
-            mse_data = f["episode_mse_summary/mean"][:]
-        else:
-            episode_keys = [k for k in f.keys() if k.startswith("episode_")]
-            all_episode_mse = []
-            for ep in episode_keys:
-                if "action_mse" in f[ep]:
-                    all_episode_mse.append(f[ep]["action_mse"][:])
-            if all_episode_mse:
-                mse_data = np.concatenate(all_episode_mse)
-            else:
-                mse_data = np.array([np.nan])
-        return mse_data
-
-def gather_mse_stats(eval_dir: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Gather mean and quantile MSE statistics from all steps.
-
-    Args:
-        eval_dir (Path): Directory containing step folders with 'evaluate.h5'.
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-            steps, mean_mse, q25_mse, q75_mse
-    """
-    h5_files = sorted(
-        [p / "evaluate.h5" for p in eval_dir.iterdir() if p.is_dir() and (p / "evaluate.h5").exists()],
-        key=lambda x: extract_step_from_name(x.parent.name)
-    )
-
-    steps: List[int] = []
-    mean_mse: List[float] = []
-    q25_mse: List[float] = []
-    q75_mse: List[float] = []
-
-    for h5_file in h5_files:
-        step = extract_step_from_name(h5_file.parent.name)
+def gather_stats(eval_dir: Path):
+    """Gather statistics: mean, median, quantiles, min, max for all valid steps."""
+    step_dirs = sorted([p for p in eval_dir.iterdir() if p.is_dir() and (p / "evaluate.h5").exists()],
+                       key=lambda p: extract_step_from_name(p.name))
+    steps, mean, median, q25, q75, vmin, vmax = [], [], [], [], [], [], []
+    for step_dir in step_dirs:
+        step = extract_step_from_name(step_dir.name)
+        mse = load_episode_mse(step_dir / "evaluate.h5")
+        if mse is None:
+            print(f"[SKIP] step {step}")
+            continue
         steps.append(step)
-        mse_data = load_mse_from_h5(h5_file)
-        mean_mse.append(float(np.nanmean(mse_data)))
-        q25_mse.append(float(np.nanpercentile(mse_data, 25)))
-        q75_mse.append(float(np.nanpercentile(mse_data, 75)))
+        mean.append(float(np.mean(mse)))
+        median.append(float(np.median(mse)))
+        q25.append(float(np.percentile(mse, 25)))
+        q75.append(float(np.percentile(mse, 75)))
+        vmin.append(float(np.min(mse)))
+        vmax.append(float(np.max(mse)))
+    if not steps:
+        raise RuntimeError("No valid evaluation data found.")
+    return np.array(steps), np.array(mean), np.array(median), np.array(q25), np.array(q75), np.array(vmin), np.array(vmax)
 
-    return np.array(steps), np.array(mean_mse), np.array(q25_mse), np.array(q75_mse)
 
-def plot_mse_curve(
-    steps: np.ndarray,
-    mean_mse: np.ndarray,
-    q25_mse: np.ndarray,
-    q75_mse: np.ndarray,
-    save_path: Path,
-    dpi: int = 300
-) -> None:
-    """
-    Plot MSE curve with mean and 25-75 percentile shaded area, then save to file.
-
-    Args:
-        steps (np.ndarray): Training steps.
-        mean_mse (np.ndarray): Mean MSE per step.
-        q25_mse (np.ndarray): 25th percentile MSE.
-        q75_mse (np.ndarray): 75th percentile MSE.
-        save_path (Path): Output PNG file path.
-        dpi (int): Resolution of saved image, default is 300.
-    """
-    plt.figure(figsize=(10,6))
-    plt.plot(steps, mean_mse, label="Mean MSE", color="blue", marker='o')
-    plt.fill_between(steps, q25_mse, q75_mse, color="blue", alpha=0.2, label="25-75 percentile", edgecolor='none')
-    plt.xlabel("Training Step")
-    plt.ylabel("MSE")
-    plt.title("MSE vs Training Step")
-    plt.legend()
-    plt.grid(True)
+def plot_mse_two_subplots(steps, mean, median, q25, q75, vmin, vmax, save_path: Path, dpi=300):
+    """Plot two subplots: first with 25-75 percentile, median, mean; second with min-max included."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 12), sharex=True)
+    # Subplot 1: 25-75 percentile + median + mean
+    ax = axes[0]
+    ax.fill_between(steps, q25, q75, alpha=0.3, color="#1f77b4", label="25–75 percentile")
+    ax.plot(steps, median, linewidth=2, label="Median", color="#ff7f0e")
+    ax.plot(steps, mean, linestyle="--", linewidth=2, label="Mean", color="#2ca02c")
+    ax.set_title("25–75 percentile, Median & Mean", fontsize=14, fontweight='bold')
+    ax.set_ylabel("Episode MSE", fontsize=12)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend(fontsize=12)
+    # Subplot 2: min-max + 25-75 percentile + median + mean
+    ax = axes[1]
+    ax.fill_between(steps, vmin, vmax, alpha=0.15, color="#d62728", label="Min–Max")
+    ax.fill_between(steps, q25, q75, alpha=0.35, color="#1f77b4", label="25–75 percentile")
+    ax.plot(steps, median, linewidth=2, label="Median", color="#ff7f0e")
+    ax.plot(steps, mean, linestyle="--", linewidth=2, label="Mean", color="#2ca02c")
+    ax.set_title("Min–Max + 25–75 percentile, Median & Mean", fontsize=14, fontweight='bold')
+    ax.set_xlabel("Training Step", fontsize=12)
+    ax.set_ylabel("Episode MSE", fontsize=12)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend(fontsize=12)
     plt.tight_layout()
     plt.savefig(save_path, dpi=dpi)
     plt.close()
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot MSE vs Training Step for OpenPI evaluations.")
-    parser.add_argument("--eval-dir", type=str, required=True,
-                        help="Path to the eval_results directory containing step folders with evaluate.h5")
-    args = parser.parse_args()
 
+def main():
+    parser = argparse.ArgumentParser(description="Plot MSE vs training step with two subplots")
+    parser.add_argument("--eval-dir", required=True, type=str, help="Directory with step folders containing evaluate.h5")
+    parser.add_argument("--dpi", type=int, default=300, help="Figure DPI")
+    args = parser.parse_args()
     eval_dir = Path(args.eval_dir)
     if not eval_dir.exists():
-        raise FileNotFoundError(f"Directory does not exist: {eval_dir}")
-
-    steps, mean_mse, q25_mse, q75_mse = gather_mse_stats(eval_dir)
-
-    output_file = eval_dir / "mse_curve.png"
-    plot_mse_curve(steps, mean_mse, q25_mse, q75_mse, output_file, dpi=300)
-    print(f"Saved MSE curve plot to {output_file}")
+        raise FileNotFoundError(eval_dir)
+    steps, mean, median, q25, q75, vmin, vmax = gather_stats(eval_dir)
+    out_file = eval_dir / "mse_curve.png"
+    plot_mse_two_subplots(steps, mean, median, q25, q75, vmin, vmax, out_file, dpi=args.dpi)
+    print(f"[OK] Saved plot to {out_file}")
 
 if __name__ == "__main__":
     main()

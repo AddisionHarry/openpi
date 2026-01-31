@@ -165,13 +165,16 @@ def main():
                     recv_time = time.time()
                     time_since_last = recv_time - last_recv_walltime
                     last_recv_walltime = recv_time
-                    if (time_since_last >= 10.0) or (base_timestamp is None):
+                    if (time_since_last >= 30.0) or (base_timestamp is None):
                         print(f"[Server] {time_since_last:.1f}s no message, sending first frame actions.")
                         base_timestamp = "wait for startup"
                         action = pack_real_action(episode_actions[0], args.use_arms, args.use_waist_angles, args.use_tcp_pose)
                         actions_list = [action] * args.chunk_size
                         response = json.dumps({
-                            "predicted_action": actions_list,
+                            # 'right_arm_joint_angles': np.array(actions_list)[:, :7].tolist(),
+                            # 'right_hand_joints': np.array(actions_list)[:, 7:13].tolist(),
+                            # 'waist_angles': np.array(actions_list)[:, 13:15].tolist(),
+                            'predicted_action': actions_list,
                             "timestamp": message["timestamp"],
                             "slow_move": True
                         })
@@ -197,7 +200,10 @@ def main():
                             action = pack_real_action(episode_actions[-1], args.use_arms, args.use_waist_angles, args.use_tcp_pose)
                             window.append(action)
                     response = json.dumps({
-                        "predicted_action": window,
+                        # 'right_arm_joint_angles': np.array(window)[:, :7].tolist(),
+                        # 'right_hand_joints': np.array(window)[:, 7:13].tolist(),
+                        # 'waist_angles': np.array(window)[:, 13:15].tolist(),
+                        'predicted_action': window,
                         "timestamp": message["timestamp"],
                         "slow_move": False
                     })

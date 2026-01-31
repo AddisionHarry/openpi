@@ -42,6 +42,7 @@ dependencies = [
     "pytorch-kinematics>=0.7.6",
     "debugpy>=1.8.14",
     "etils>=1.12.2",
+    "matplotlib>=3.10.3",
 ]
 
 

@@ -22,8 +22,8 @@ if [ $TEST_DISPLAY -eq 1 ]; then
         --port 10043 \
         --chunk-size 50 \
         --dataset-action-fps 30 \
-        --dataset-dir "/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260112/pi0_industrial_sorting_joint_20260112" \
-        --episode-index 10 \
+        --dataset-dir "/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125/pi05_industrial_sorting_joint_20260125" \
+        --episode-index 50 \
         --use-arms "[False, True]" \
         --use-waist-angles True \
         --use-tcp-pose False
@@ -31,8 +31,14 @@ else
     echo "[INFO] Normal inference server.py"
     CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
         uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
-        --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_20260112/pi0_industrrial_sorting_20260117/30000 \
+        --model_path /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/10000 \
         --device cuda:0 \
-        --config_name pi0_industrial_sorting_joint_20260112 \
+        --config_name pi05_industrial_sorting_joint_20260126 \
         --port 10043
+    # CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
+    #     uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
+    #     --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_20260126/pi0_industrial_sorting_20260128/20000 \
+    #     --device cuda:0 \
+    #     --config_name pi0_industrial_sorting_joint_20260126 \
+    #     --port 10043
 fi

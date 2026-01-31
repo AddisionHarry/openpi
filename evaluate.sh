@@ -64,6 +64,8 @@ while [[ $# -gt 0 ]]; do
       TOTAL_STEPS="$2"; shift 2 ;;
     --inference-res-freq)
       INFERENCE_RES_FREQ="$2"; shift 2 ;;
+    --evaluate-interval)
+      STEP_INTERVAL="$2"; shift 2 ;;
     *)
       echo "Unknown argument: $1"
       exit 1 ;;
@@ -138,9 +140,9 @@ for ((i=${#STEPS[@]}-1; i>=0; i--)); do
     --out-dir "${MODEL_ROOT}/eval_results/${STEP}/viz" \
     --top-k 30 --chunk-stride 10
 
-  uv run /root/openpi/src/evaluate/viz_train_mse.py --eval-dir "${MODEL_ROOT}/eval_results
-
 done
+
+uv run /root/openpi/src/evaluate/viz_train_mse.py --eval-dir "${MODEL_ROOT}/eval_results"
 
 # DEBUG_MODE=1 CUDA_VISIBLE_DEVICES=1 uv run python3 /root/openpi/src/evaluate/eval_dataset.py \
 #     --dataset-dir /root/openpi/data_domain/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20251214/pi0_joint_clean_joint_jit \

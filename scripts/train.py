@@ -4,6 +4,7 @@ import functools
 import logging
 import platform
 from typing import Any, Iterator, Callable, Tuple
+from dataclasses import replace
 
 import etils.epath as epath
 import flax.nnx as nnx
@@ -29,7 +30,6 @@ import openpi.training.optimizer as _optimizer
 import openpi.training.sharding as sharding
 import openpi.training.utils as training_utils
 import openpi.training.weight_loaders as _weight_loaders
-
 
 def init_logging():
     """Custom logging format for better readability."""
@@ -275,13 +275,18 @@ def main(config: _config.TrainConfig):
         resume=config.resume,
     )
     init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
-
     train_data_loader, val_data_loader = _data_loader.create_data_loader(
         config,
         sharding=data_sharding,
         val_fraction=0.04 if not hasattr(config, "val_fraction") else config.val_fraction,
         shuffle=True,
     )
+    if isinstance(config.data, _config.LeRobotZJHumanoidDataConfig) and config.data.use_hand_align_state:
+        logging.info("Using hand align state for training.")
+        assert "hand_align_state" in train_data_loader._data_loader._data_loader.dataset._dataset._dataset.features["observation.state"]['names']
+        idx = train_data_loader._data_loader._data_loader.dataset._dataset._dataset.features["observation.state"]['names'].index("hand_align_state")
+        assert idx == config.data.hand_align_state_idx, f"Hand align state index mismatch: config {config.data.hand_align_state_idx}, dataset {idx}"
+        logging.info(f"Hand align state index: {idx}")
     train_data_iter = iter(train_data_loader)
     val_data_iter = iter(val_data_loader) if val_data_loader else None
     train_batch = next(train_data_iter)

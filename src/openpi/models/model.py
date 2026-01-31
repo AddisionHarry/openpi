@@ -106,6 +106,9 @@ class Observation(Generic[ArrayT]):
     # Token loss mask (for FAST autoregressive model).
     token_loss_mask: at.Bool[ArrayT, "*b l"] | None = None
 
+    pregrasp_align_stage: at.Bool[ArrayT, "*b"] | None = None
+    chest_image_mask_prob: at.Float[ArrayT, "*b"] | None = None
+
     @classmethod
     def from_dict(cls, data: at.PyTree[ArrayT]) -> "Observation[ArrayT]":
         """This method defines the mapping between unstructured data (i.e., nested dict) to the structured Observation format."""
@@ -118,6 +121,8 @@ class Observation(Generic[ArrayT]):
                 data["image"][key] = data["image"][key].astype(np.float32) / 255.0 * 2.0 - 1.0
             elif hasattr(data["image"][key], "dtype") and data["image"][key].dtype == torch.uint8:
                 data["image"][key] = data["image"][key].to(torch.float32).permute(0, 3, 1, 2) / 255.0 * 2.0 - 1.0
+        pregrasp_align_stage = np.array(data.get("hand_align_state"), dtype=bool)
+        chest_image_mask_prob = np.array(data.get("chest_image_mask_prob"), dtype=np.float32)
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
@@ -126,6 +131,8 @@ class Observation(Generic[ArrayT]):
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
+            pregrasp_align_stage=pregrasp_align_stage,
+            chest_image_mask_prob=chest_image_mask_prob,
         )
 
     def to_dict(self) -> at.PyTree[ArrayT]:
@@ -207,10 +214,23 @@ def preprocess_observation(
                     augmax.Rotate((-5, 5)),
                 ]
             transforms += [
-                augmax.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5),
+                # augmax.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5),
+                augmax.ColorJitter(brightness=0.15, contrast=0.2, saturation=0.2),
             ]
             sub_rngs = jax.random.split(rng, image.shape[0])
             image = jax.vmap(augmax.Chain(*transforms))(sub_rngs, image)
+
+            mask_cond = observation.pregrasp_align_stage & (observation.chest_image_mask_prob > 0)
+            def apply_noise(image, mask_cond, prob, rng):
+                B = image.shape[0]
+                rngs_noise = jax.random.split(rng, B)
+                random_images = jax.vmap(lambda r, img: jax.random.uniform(r, img.shape, dtype=img.dtype))(rngs_noise, image)
+                masks = jax.vmap(lambda r, p: jax.random.bernoulli(r, p=p, shape=()))(rngs_noise, prob)
+                return jax.vmap(lambda m, cond, orig, rand: jax.lax.select(cond, jax.lax.select(m, rand, orig), orig))(
+                    masks, mask_cond, image, random_images
+                )
+            image = jax.lax.cond("wrist" not in key, apply_noise, lambda image, *_: image,
+                                 image, mask_cond, observation.chest_image_mask_prob, rng)
 
             # Back to [-1, 1].
             image = image * 2.0 - 1.0

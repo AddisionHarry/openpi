@@ -511,9 +511,10 @@ class SplitStateTransform:
         return data
 
 class PackActionTransform:
-    def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False):
+    def __init__(self, use_arms: List[bool] = [False, True], use_tcp_pose: bool = False, use_waist: bool = False):
         self.use_arms = use_arms
         self.use_tcp_pose = use_tcp_pose
+        self.use_waist = use_waist
 
     def __call__(self, data):
         if self.use_arms[0] and not self.use_arms[1]:
@@ -522,14 +523,14 @@ class PackActionTransform:
             # left_hand_joints = data["teleoperate_action_states"][0:6]
             # left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
             left_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_hand_joint"]]
-            data["actions"] = torch.cat([left_arm_joints, left_hand_joints], dim=1)
+            base_actions = torch.cat([left_arm_joints, left_hand_joints], dim=1)
         elif not self.use_arms[0] and self.use_arms[1]:
             # Right arm joints + right hand joints
             right_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_arm_joint"]]
             # right_hand_joints = data["teleoperate_action_states"][6:12]
             # right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
             right_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
-            data["actions"] = torch.cat([right_arm_joints, right_hand_joints], dim=1)
+            base_actions = torch.cat([right_arm_joints, right_hand_joints], dim=1)
         elif self.use_arms[0] and self.use_arms[1]:
             # Left arm joints + left hand joints + right arm joints + right hand joints
             left_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_arm_joint"]]
@@ -542,11 +543,33 @@ class PackActionTransform:
             # right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
             right_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
 
-            data["actions"] = torch.cat([left_arm_joints, left_hand_joints, right_arm_joints, right_hand_joints], dim=1)
+            base_actions = torch.cat([left_arm_joints, left_hand_joints, right_arm_joints, right_hand_joints], dim=1)
         elif not self.use_arms[0] and not self.use_arms[1]:
             raise ValueError("At least one arm must be used.")
+
+        if self.use_waist:
+            waist_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["waist_joint"]]
+            data["actions"] = torch.cat([base_actions, waist_joints], dim=1)
+        else:
+            data["actions"] = base_actions
+
         return data
 
+class SetHandAlignState:
+    def __init__(self, use_hand_align_state: bool = False, hand_align_state_idx: int = 0,
+                 hand_align_state_chest_image_mask_prob: float = 0.0):
+        self.use_hand_align_state: bool = use_hand_align_state
+        self.hand_align_state_idx: int = hand_align_state_idx
+        self.chest_image_mask_prob: float = hand_align_state_chest_image_mask_prob
+
+    def __call__(self, data):
+        if self.use_hand_align_state:
+            data["hand_align_state"] = data["observation.state"][self.hand_align_state_idx]
+            data["hand_align_state_chest_image_mask_prob"] = self.chest_image_mask_prob
+        else:
+            data["hand_align_state"] = 0
+            data["hand_align_state_chest_image_mask_prob"] = 0.0
+        return data
 
 @runtime_checkable
 class DataTransformFn(Protocol):
@@ -849,6 +872,10 @@ class LeRobotZJHumanoidDataConfig(DataConfigFactory):
 
     flip_wrist_images: bool = False
 
+    use_hand_align_state: bool = False
+    hand_align_state_chest_image_mask_prob: float = 0.0
+    hand_align_state_idx: int = 0
+
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         # The repack transform is *only* applied to the data coming from the dataset,
@@ -863,6 +890,8 @@ class LeRobotZJHumanoidDataConfig(DataConfigFactory):
             "observation/images/chest_rgb": "observation.images.chest_rgb",
             "actions": "actions",
             "prompt": "prompt",
+            "hand_align_state": "hand_align_state",
+            "hand_align_state_chest_image_mask_prob": "hand_align_state_chest_image_mask_prob"
         }
         if self.use_wrist_cameras[0]:
             mapping["observation/images/left_wrist_rgb"] = "observation.images.left_wrist_rgb"
@@ -886,7 +915,10 @@ class LeRobotZJHumanoidDataConfig(DataConfigFactory):
         repack_transform = _transforms.Group(
             inputs=[
                 SplitStateTransform(self.use_arms, self.use_tcp_pose, self.obs_use_waist_angles),
-                PackActionTransform(self.use_arms, self.use_tcp_pose),
+                PackActionTransform(self.use_arms, self.use_tcp_pose, self.action_use_waist_angles),
+                SetHandAlignState(self.use_hand_align_state,
+                                  self.hand_align_state_idx,
+                                  self.hand_align_state_chest_image_mask_prob),
                 _transforms.RepackTransform(mapping),
             ]
         )
@@ -2153,6 +2185,168 @@ _CONFIGS = [
     ),
     TrainConfig(
         # Change the name to reflect your model and dataset.
+        name="pi0_industrial_sorting_joint_20260126",
+        project_name="industrial_sorting",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=False),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi0_industrial_sorting_joint_20260125",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+                asset_id="pi0_industrial_sorting_joint_20260125",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=True
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=5e-4,
+            decay_steps=30_000,
+            decay_lr=6e-5,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=35_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi0_industrial_sorting_joint_20260130_last_frames_still",
+        project_name="industrial_sorting",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=False),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi0_industrial_sorting_joint_20260130_last_frames_still",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+                asset_id="pi0_industrial_sorting_joint_20260130_last_frames_still",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=True
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=4e-4,
+            decay_steps=22_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi0_industrial_sorting_joint_20260130_last_frames_still_grasp_noise_chest_images",
+        project_name="industrial_sorting",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=False),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi0_industrial_sorting_joint_20260130_last_frames_still_grasp_noise_chest_images",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+                asset_id="pi0_industrial_sorting_joint_20260130_last_frames_still_grasp_noise_chest_images",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=True,
+            use_hand_align_state=True,
+            hand_align_state_chest_image_mask_prob=0.2,
+            hand_align_state_idx=64,
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=4e-4,
+            decay_steps=22_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=64,
+        num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
         name="pi05_industrial_sorting_joint_20260112",
         project_name="industrial_sorting",
         assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260112"),
@@ -2189,13 +2383,13 @@ _CONFIGS = [
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1500,
             peak_lr=3e-4,
-            decay_steps=36_000,
-            decay_lr=8e-5,
+            decay_steps=45_000,
+            decay_lr=5e-5,
         ),
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
-        num_train_steps=40_000,
-        log_interval=50,
+        num_train_steps=50_000,
+        log_interval=100,
         save_interval=1000,
         keep_period=20_000,
         batch_size=32,
@@ -2206,8 +2400,9 @@ _CONFIGS = [
     ),
     TrainConfig(
         # Change the name to reflect your model and dataset.
-        name="pi05_industrial_sorting_joint_waist_manually_cleaned20251227",
-        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251214"),
+        name="pi05_industrial_sorting_joint_20260126",
+        project_name="industrial_sorting",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
         # Here you define the model config -- In this example we use pi0 as the model
         # architecture and perform *full* finetuning. in the examples below we show how to modify
         # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
@@ -2216,10 +2411,10 @@ _CONFIGS = [
         # dataset. For your own dataset, you can change the repo_id to point to your dataset.
         # Also modify the DataConfig to use the new config you made for your dataset above.
         data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/pi05_industrial_sorting_joint_waist_manually_cleaned20251227",
+            repo_id="zj-humanoid/pi05_industrial_sorting_joint_20260125",
             assets=AssetsConfig(
-                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251214"),
-                asset_id="pi05_industrial_sorting_joint_waist_manually_cleaned20251224",
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+                asset_id="pi05_industrial_sorting_joint_20260125",
             ),
             base_config=DataConfig(
                 # This flag determines whether we load the prompt (i.e. the task instruction) from the
@@ -2240,19 +2435,129 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1500,
-            peak_lr=5e-5,
-            decay_steps=15_000,
-            decay_lr=5e-7,
+            peak_lr=2e-4,
+            decay_steps=35_000,
+            decay_lr=3e-5,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=40_000,
+        log_interval=100,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=32,
+        num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_industrial_sorting_joint_20260130_last_frames_still",
+        project_name="industrial_sorting",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi05_industrial_sorting_joint_20260130_last_frames_still",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+                asset_id="pi05_industrial_sorting_joint_20260130_last_frames_still",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=True
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=1e-4,
+            decay_steps=22_000,
+            decay_lr=2e-6,
         ),
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
         num_train_steps=25_000,
-        log_interval=25,
-        save_interval=500,
+        log_interval=50,
+        save_interval=1000,
         keep_period=20_000,
         batch_size=32,
-        num_workers=16,
+        num_workers=8,
         force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images",
+        project_name="industrial_sorting",
+        assets_base_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images",
+            assets=AssetsConfig(
+                assets_dir=pathlib.Path("/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125"),
+                asset_id="pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=False,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=True,
+            use_hand_align_state=True,
+            hand_align_state_chest_image_mask_prob=0.2,
+            hand_align_state_idx=64,
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=1e-4,
+            decay_steps=22_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=32,
+        # num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
         # wandb_enabled=False,
     ),
     TrainConfig(
