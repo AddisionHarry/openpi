@@ -9,51 +9,53 @@ if [ -z "$TASK" ]; then
 fi
 
 if [ "$TASK" == "0" ]; then
-    CUDA_VISIBLE_DEVICES=0
-    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_20260126 && \
-    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
-        pi0_industrial_sorting_joint_20260126 --exp-name=pi0_industrial_sorting_20260128 --overwrite
+    CUDA_VISIBLE_DEVICES=1
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_20260130_last_frames_still && \
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi05_industrial_sorting_joint_20260130_last_frames_still --exp-name=pi05_industrial_sorting_joint_20260130_last_frames_still --overwrite
 
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
-    #     pi0_industrial_sorting_joint_20260126 --exp-name=pi0_industrial_sorting_20260128 --resume
+    #     pi05_industrial_sorting_joint_20260130_last_frames_still --exp-name=pi05_industrial_sorting_joint_20260130_last_frames_still --resume
 
     bash /root/openpi/evaluate.sh \
         --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
         --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20260125/pi0_joint_reshape_videos \
-        --model-root /root/openpi/checkpoints/pi0_industrial_sorting_joint_20260126/pi0_industrial_sorting_20260128 \
-        --config-name pi0_industrial_sorting_joint_20260126 \
+        --model-root /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260130_last_frames_still/pi05_industrial_sorting_joint_20260130_last_frames_still \
+        --config-name pi05_industrial_sorting_joint_20260130_last_frames_still \
         --use-arms "[False, True]" \
         --use-waist-angles True \
         --use-tcp-pose False \
-        --total-steps 35000 \
-        --inference-res-freq 30
+        --total-steps 25000 \
+        --inference-res-freq 30 \
+        --evaluate-interval 1000
 
 elif [ "$TASK" == "1" ]; then
     CUDA_VISIBLE_DEVICES=1
-    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_20260126 && \
-    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
-        pi05_industrial_sorting_joint_20260126 --exp-name=pi05_industrial_sorting_20260128 --overwrite
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run python3 scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_20260130_last_frames_still && \
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi0_industrial_sorting_joint_20260130_last_frames_still --exp-name=pi0_industrial_sorting_joint_20260130_last_frames_still --overwrite
 
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
-    #     pi05_industrial_sorting_joint_20260126 --exp-name=pi05_industrial_sorting_20260128 --resume
+    #     pi0_industrial_sorting_joint_20260130_last_frames_still --exp-name=pi0_industrial_sorting_joint_20260130_last_frames_still --resume
 
     bash /root/openpi/evaluate.sh \
         --cuda-visible-devices "${CUDA_VISIBLE_DEVICES}" \
         --dataset-dir /mnt/pfs/sorting_train_data/train_dataset_raw/industrial_sorting_clean_unzipped_20260125/pi0_joint_reshape_videos \
-        --model-root /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128 \
-        --config-name pi05_industrial_sorting_joint_20260126 \
+        --model-root /root/openpi/checkpoints/pi0_industrial_sorting_joint_20260130_last_frames_still/pi0_industrial_sorting_joint_20260130_last_frames_still \
+        --config-name pi0_industrial_sorting_joint_20260130_last_frames_still \
         --use-arms "[False, True]" \
         --use-waist-angles True \
         --use-tcp-pose False \
-        --total-steps 40000 \
-        --inference-res-freq 30
+        --total-steps 25000 \
+        --inference-res-freq 30 \
+        --evaluate-interval 1000
 
 elif [ "$TASK" == "2" ]; then
-    uv run python3 -c "from tqdm import tqdm; import time; [time.sleep(1) for _ in tqdm(range(3600 * 25), desc='Sleeping 25 hours', unit='s')]"
+    uv run python3 -c "from tqdm import tqdm; import time; [time.sleep(1) for _ in tqdm(range(3600 * 10), desc='Sleeping 10 hours', unit='s')]"
 
     CUDA_VISIBLE_DEVICES=2
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_20260130_last_frames_still && \
-    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=1 uv run scripts/train.py \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
         pi0_industrial_sorting_joint_20260130_last_frames_still --exp-name=pi0_industrial_sorting_last_frames_still_20260131 --overwrite
 
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
@@ -72,7 +74,7 @@ elif [ "$TASK" == "2" ]; then
         --evaluate-interval 1000
 
 elif [ "$TASK" == "3" ]; then
-    uv run python3 -c "from tqdm import tqdm; import time; [time.sleep(1) for _ in tqdm(range(3600 * 20), desc='Sleeping 20 hours', unit='s')]"
+    uv run python3 -c "from tqdm import tqdm; import time; [time.sleep(1) for _ in tqdm(range(3600 * 25), desc='Sleeping 25 hours', unit='s')]"
 
     CUDA_VISIBLE_DEVICES=0
     CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_20260130_last_frames_still && \
@@ -95,11 +97,11 @@ elif [ "$TASK" == "3" ]; then
         --evaluate-interval 1000
 
 elif [ "$TASK" == "4" ]; then
-    uv run python3 -c "from tqdm import tqdm; import time; [time.sleep(1) for _ in tqdm(range(3600 * 10), desc='Sleeping 10 hours', unit='s')]"
+    # uv run python3 -c "from tqdm import tqdm; import time; [time.sleep(1) for _ in tqdm(range(3600 * 10), desc='Sleeping 10 hours', unit='s')]"
 
-    CUDA_VISIBLE_DEVICES=1
+    CUDA_VISIBLE_DEVICES=0
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run scripts/compute_norm_stats.py --config-name pi0_industrial_sorting_joint_20260130_last_frames_still_grasp_noise_chest_images && \
-    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=1 uv run scripts/train.py \
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
         pi0_industrial_sorting_joint_20260130_last_frames_still_grasp_noise_chest_images --exp-name=pi0_industrial_sorting_joint_20260130_last_frames_still_grasp_noise_chest_images --overwrite
 
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
@@ -120,8 +122,8 @@ elif [ "$TASK" == "4" ]; then
 elif [ "$TASK" == "5" ]; then
     CUDA_VISIBLE_DEVICES=2
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" DEBUG_MODE=0 uv run scripts/compute_norm_stats.py --config-name pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images && \
-    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
-        pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images --exp-name=pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images --overwrite
+    # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
+    #     pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images --exp-name=pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images --overwrite
 
     # CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 DEBUG_MODE=0 uv run scripts/train.py \
     #     pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images --exp-name=pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images --resume

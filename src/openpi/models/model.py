@@ -121,8 +121,9 @@ class Observation(Generic[ArrayT]):
                 data["image"][key] = data["image"][key].astype(np.float32) / 255.0 * 2.0 - 1.0
             elif hasattr(data["image"][key], "dtype") and data["image"][key].dtype == torch.uint8:
                 data["image"][key] = data["image"][key].to(torch.float32).permute(0, 3, 1, 2) / 255.0 * 2.0 - 1.0
-        pregrasp_align_stage = np.array(data.get("hand_align_state"), dtype=bool)
-        chest_image_mask_prob = np.array(data.get("chest_image_mask_prob"), dtype=np.float32)
+        batch_size = data["state"].shape[0]
+        pregrasp_align_stage = np.array(data.get("hand_align_state"), dtype=bool) if data.get("hand_align_state") is not None else np.full(batch_size, False, dtype=bool)
+        chest_image_mask_prob = np.array(data.get("chest_image_mask_prob"), dtype=np.float32) if data.get("chest_image_mask_prob") is not None else np.zeros(batch_size, dtype=np.float32)
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
