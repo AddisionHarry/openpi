@@ -3,16 +3,19 @@
         "editor.defaultFormatter": "vscode.json-language-features",
         "editor.formatOnSave": true
     },
+    "python.languageServer": "Pylance",
+    "python.pythonPath": "${workspaceFolder}/.venv/bin/python",
     "python.testing.pytestArgs": [
         "src"
     ],
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true,
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src",
+        "${workspaceFolder}/.venv/lib/python3.11/site-packages",
         "${workspaceFolder}/src/check_dataset",
         "${workspaceFolder}/src/naviai_inference/workspace/diffusion_policy_ws/src/naviai_manip_diffusion_policy/src"
     ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
     // "python.analysis.typeCheckingMode": "off",
     // "python.analysis.diagnosticSeverityOverrides": {
     //     "reportOptionalMemberAccess": "none",

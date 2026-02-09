@@ -3292,7 +3292,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "augmax" },
-    { name = "av" },
     { name = "beartype" },
     { name = "debugpy" },
     { name = "dm-tree", version = "0.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
@@ -3353,7 +3352,6 @@ rlds = [
 [package.metadata]
 requires-dist = [
     { name = "augmax", specifier = ">=0.3.4" },
-    { name = "av", specifier = ">=14.4.0" },
     { name = "beartype", specifier = "==0.19.0" },
     { name = "debugpy", specifier = ">=1.8.14" },
     { name = "dm-tree", specifier = ">=0.1.8" },

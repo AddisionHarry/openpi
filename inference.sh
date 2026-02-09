@@ -29,18 +29,18 @@ if [ $TEST_DISPLAY -eq 1 ]; then
         --use-tcp-pose False
 else
     echo "[INFO] Normal inference server.py"
-    # CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
-    #     uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
-    #     --model_path /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images/pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images/15000 \
-    #     --device cuda:0 \
-    #     --config_name pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images \
-    #     --port 10043
     CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
         uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
-        --model_path /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/13000 \
+        --model_path /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images/pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images/15000 \
         --device cuda:0 \
-        --config_name pi05_industrial_sorting_joint_20260126 \
+        --config_name pi05_industrial_sorting_joint_20260131_last_frames_still_grasp_noise_chest_images \
         --port 10043
+    # CUDA_VISIBLE_DEVICES=0 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
+    #     uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
+    #     --model_path /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/13000 \
+    #     --device cuda:0 \
+    #     --config_name pi05_industrial_sorting_joint_20260126 \
+    #     --port 10043
     # CUDA_VISIBLE_DEVICES=2 TORCHINDUCTOR_COMPILE_THREADS=1 DEBUG_MODE=0 \
     #     uv run python3 ${SCRIPT_DIR}/scripts/inference.py \
     #     --model_path /root/openpi/checkpoints/pi0_industrial_sorting_joint_20260126/pi0_industrial_sorting_20260128/20000 \
