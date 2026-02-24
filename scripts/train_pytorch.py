@@ -684,7 +684,7 @@ def train_loop(config: _config.TrainConfig):
 
                 # # Val action MSE loss
                 # with torch.no_grad():
-                #     predicted_action = (
+                #     predicted_action, _ = (
                 #         model.module.sample_actions(device, observation)
                 #         if use_ddp else model.sample_actions(device, observation)
                 #     )

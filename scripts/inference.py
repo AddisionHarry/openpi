@@ -29,23 +29,9 @@ PACK_LEN_INDICATOR_LEN = 4
 TEST_SAVE_IMAGES = False
 
 # ------------------------- Helper Functions -------------------------
-def parse_image_from_message(image_msg: str, device: str, image_format='rgb', dtype='float') -> torch.Tensor:
+def parse_image_from_message_np(image_msg: str, device: str, image_format='rgb', dtype='float') -> np.ndarray:
     """
-    Decode base64 image message into a torch tensor suitable for model input.
-    """
-    image_data = base64.b64decode(image_msg)
-    np_arr = np.frombuffer(image_data, dtype=np.uint8)
-    image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    if image_format == 'bgr':
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    if dtype == 'float':
-        image = image.astype(np.float32) / 255.0
-    image_tensor = torch.from_numpy(image).to(device).unsqueeze(0).permute(0, 3, 1, 2)
-    return image_tensor
-
-def parse_image_from_message_np(image_msg: str, device: str, image_format='rgb', dtype='float') -> torch.Tensor:
-    """
-    Decode base64 image message into a torch tensor suitable for model input.
+    Decode base64 image message into a numpy array.
     """
     # base64 -> bytes -> np.uint8 buffer -> BGR
     image_data = base64.b64decode(image_msg)

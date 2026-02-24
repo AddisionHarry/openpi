@@ -215,7 +215,7 @@ def eval_step(state: training_utils.TrainState, rng: at.KeyArrayLike, batch: tup
     observation = jax.tree.map(lambda x: jnp.array(x), observation)
     actions = jax.tree.map(lambda x: jnp.array(x), actions)
 
-    pred = model.sample_actions(rng, observation=observation)
+    pred, _ = model.sample_actions(rng, observation=observation)
     return jnp.mean(jnp.square(pred - actions))
 
 

@@ -1,4 +1,5 @@
 import logging
+from tracemalloc import start
 
 import einops
 import flax.nnx as nnx
@@ -64,7 +65,7 @@ def posemb_sincos(
 
 
 class Pi0(_model.BaseModel):
-    def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
+    def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs, get_attn_map: bool = False):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
         paligemma_config = _gemma.get_config(config.paligemma_variant)
@@ -75,6 +76,7 @@ class Pi0(_model.BaseModel):
                 configs=[paligemma_config, action_expert_config],
                 embed_dtype=config.dtype,
                 adarms=config.pi05,
+                return_attn_map=get_attn_map,
             )
         )
         llm.lazy_init(rngs=rngs, method="init", use_adarms=[False, True] if config.pi05 else [False, False])
@@ -102,6 +104,9 @@ class Pi0(_model.BaseModel):
         # This attribute gets automatically set by model.train() and model.eval().
         self.deterministic = True
 
+        self.token_annotations = {"VLM_Inference": {"image_tokens": None, "language_tokens": None},
+                                  "Action_Generate": {"action_tokens": None, "state_tokens": None, "vlm_tokens_first": True}}
+
         self._debug_batch_counter = 0
 
     @at.typecheck
@@ -125,6 +130,8 @@ class Pi0(_model.BaseModel):
             )
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
+        image_end = sum([emb.shape[1] for emb in tokens])
+        self.token_annotations["VLM_Inference"]["image_tokens"] = dict(start=0, end=image_end)
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -133,6 +140,7 @@ class Pi0(_model.BaseModel):
             input_mask.append(obs.tokenized_prompt_mask)
             # full attention between image and language inputs
             ar_mask += [False] * tokenized_inputs.shape[1]
+            self.token_annotations["VLM_Inference"]["language_tokens"] = dict(start=image_end, end=image_end + tokenized_inputs.shape[1])
         tokens = jnp.concatenate(tokens, axis=1)
         input_mask = jnp.concatenate(input_mask, axis=1)
         ar_mask = jnp.array(ar_mask)
@@ -150,10 +158,13 @@ class Pi0(_model.BaseModel):
         input_mask = []
         ar_mask = []
         tokens = []
+        current_pos = 0
         if not self.pi05:
             # add a single state token
             state_token = self.state_proj(obs.state)[:, None, :]
             tokens.append(state_token)
+            self.token_annotations["Action_Generate"]["state_tokens"] = dict(start=current_pos, end=current_pos + state_token.shape[1])
+            current_pos += state_token.shape[1]
             input_mask.append(jnp.ones((obs.state.shape[0], 1), dtype=jnp.bool_))
             # image/language inputs do not attend to state or actions
             ar_mask += [True]
@@ -180,6 +191,9 @@ class Pi0(_model.BaseModel):
             adarms_cond = None
         tokens.append(action_expert_tokens)
         input_mask.append(jnp.ones(action_expert_tokens.shape[:2], dtype=jnp.bool_))
+        self.token_annotations["Action_Generate"]["action_tokens"] = dict(start=current_pos, end=current_pos + action_expert_tokens.shape[1])
+        self.token_annotations["Action_Generate"]["vlm_tokens_first"] = True
+        current_pos += action_expert_tokens.shape[1]
         # image/language/state inputs do not attend to action tokens
         ar_mask += [True] + ([False] * (self.action_horizon - 1))
         tokens = jnp.concatenate(tokens, axis=1)
@@ -213,13 +227,15 @@ class Pi0(_model.BaseModel):
 
     @override
     def compute_loss(
-        self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False
+        self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False,
+        save_batch_images: bool = False
     ) -> at.Float[at.Array, "*b ah"]:
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
         observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
 
-        # for key in observation.images:
-        #     jax.debug.callback(self.debug_save_batch, observation.images, key)
+        if save_batch_images:
+            for key in observation.images:
+                jax.debug.callback(self.debug_save_batch, observation.images, key)
 
         batch_shape = actions.shape[:-2]
         noise = jax.random.normal(noise_rng, actions.shape)
@@ -250,7 +266,9 @@ class Pi0(_model.BaseModel):
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
-    ) -> _model.Actions:
+        get_vlm_attn_map: bool = False, get_action_attn_map: bool = False,
+    ) -> tuple[_model.Actions, dict[str, at.Float[at.Array, "b ..."]]]:
+        assert isinstance(self.PaliGemma.llm.module, _gemma.Module)
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
@@ -263,9 +281,11 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+        return_attn_map_cache = self.PaliGemma.llm.module.return_attn_map
+        self.PaliGemma.llm.module.return_attn_map = get_vlm_attn_map
+        _, kv_cache, vlm_attn_probs = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
 
-        def step(carry):
+        def step(carry, _):
             x_t, time = carry
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
                 observation, x_t, jnp.broadcast_to(time, batch_size)
@@ -287,7 +307,7 @@ class Pi0(_model.BaseModel):
             # `positions` is shape (b, suffix_len) indicating the positions of the suffix tokens
             positions = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask, axis=-1) - 1
 
-            (prefix_out, suffix_out), _ = self.PaliGemma.llm(
+            (prefix_out, suffix_out), _, attn_probs = self.PaliGemma.llm(
                 [None, suffix_tokens],
                 mask=full_attn_mask,
                 positions=positions,
@@ -297,12 +317,9 @@ class Pi0(_model.BaseModel):
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-            return x_t + dt * v_t, time + dt
+            return (x_t + dt * v_t, time + dt), attn_probs
 
-        def cond(carry):
-            x_t, time = carry
-            # robust to floating-point error
-            return time >= -dt / 2
-
-        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
-        return x_0
+        self.PaliGemma.llm.module.return_attn_map = get_action_attn_map
+        ((x_0, t), action_attn_maps) = jax.lax.scan(step, (noise, 1.0), xs=None, length=num_steps,)
+        self.PaliGemma.llm.module.return_attn_map = return_attn_map_cache
+        return x_0, {"vlm": vlm_attn_probs, "action_expert": action_attn_maps, "token_annotations": self.token_annotations}

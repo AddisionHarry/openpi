@@ -15,11 +15,27 @@
         "${workspaceFolder}/src/naviai_inference/workspace/diffusion_policy_ws/src/naviai_manip_diffusion_policy/src"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
     // "python.analysis.typeCheckingMode": "off",
     // "python.analysis.diagnosticSeverityOverrides": {
     //     "reportOptionalMemberAccess": "none",
     //     "reportArgumentTypeCheck": "none",
     //     "reportGeneralTypeIssues": "none"
     // }
+    "python.analysis.exclude": [
+        "**/node_modules",
+        "**/.*",
+        "**/assets",
+        "**/viz",
+        "**/__pycache__",
+        "**/data_domain",
+        "**/viz",
+    ],
+    "search.exclude": {
+        "**/assets": true,
+        "**/viz": true,
+        "**/data_domain": true,
+         "**/__pycache__": true,
+         "**/node_modules": true,
+    }
 }

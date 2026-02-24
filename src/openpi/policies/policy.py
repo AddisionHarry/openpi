@@ -89,10 +89,8 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
-        outputs = {
-            "state": inputs["state"],
-            "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
-        }
+        actions, attn_maps = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+        outputs = {"state": inputs["state"], "actions": actions}
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
@@ -100,9 +98,10 @@ class Policy(BasePolicy):
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
 
         outputs = self._output_transform(outputs)
-        outputs["policy_timing"] = {
-            "infer_ms": model_time * 1000,
-        }
+        if (("get_vlm_attn_map" in sample_kwargs) and sample_kwargs["get_vlm_attn_map"]) or \
+            (("get_action_attn_map" in sample_kwargs) and sample_kwargs["get_action_attn_map"]):
+            outputs.update({"attn_maps": attn_maps})
+        outputs.update({"policy_timing": {"infer_ms": model_time * 1000}})
         return outputs
 
     def infer_batch(self, obs_batch: list[dict]) -> dict:
@@ -142,7 +141,7 @@ class Policy(BasePolicy):
         # 4. inference
         # ------------------------------------------------------------
         start_time = time.monotonic()
-        actions = self._sample_actions(rng, observation, **self._sample_kwargs)
+        actions = self._sample_actions(rng, observation, **self._sample_kwargs)[0]
         model_time = time.monotonic() - start_time
 
         outputs_list = []
@@ -230,7 +229,7 @@ class Policy(BasePolicy):
                 self._pytorch_device,
                 observation,
                 **sample_kwargs,
-            )
+            )[0]
 
         torch.cuda.synchronize() if self._pytorch_device.startswith("cuda") else None
         model_time = time.monotonic() - start_time

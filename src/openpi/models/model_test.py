@@ -90,5 +90,5 @@ def test_model_restore():
     loss = model.compute_loss(key, obs, act)
     assert loss.shape == (batch_size, config.action_horizon)
 
-    actions = model.sample_actions(key, obs, num_steps=10)
+    actions, _ = model.sample_actions(key, obs, num_steps=10)
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
