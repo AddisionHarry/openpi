@@ -2,19 +2,48 @@
 """
 check_episode_length.py
 
-Script to check and optionally fix episode length recorded in
-episodes.jsonl by comparing against actual parquet file lengths.
+Validate the consistency between episode lengths recorded in `episodes.jsonl`
+and the actual number of rows in corresponding `episode_XXXXXX.parquet` files.
 
+For each episode:
+    - Read row count from parquet metadata.
+    - Compare against the `length` field in episodes.jsonl.
+    - Report mismatches.
+    - Optionally overwrite incorrect `length` values when --fix is enabled.
+
+This script also checks:
+    - Missing episodes in episodes.jsonl
+    - Episodes present in jsonl but missing corresponding parquet files
+    - Duplicate episode indices in parquet directory (raises error)
+
+----------------------------------------------------------------------
 Command-line usage:
+
     python check_episode_length.py \
-        --parquet-dir </path/to/parquet> \
+        --parquet-dir </path/to/parquet_dir> \
         --episode-jsonl-path </path/to/episodes.jsonl> \
         [--fix]
 
-External interface usage:
+Options:
+    --fix    Apply in-place correction to episodes.jsonl.
+             If not specified, runs in dry-run mode.
+
+----------------------------------------------------------------------
+Programmatic usage:
+
     from check_episode_length import check_episode_length_func
-    success = check_episode_length_func("/path/to/parquet", "/path/to/episodes.jsonl", fix=True)
+
+    success = check_episode_length_func(
+        parquet_dir="/path/to/parquet_dir",
+        episode_jsonl_path="/path/to/episodes.jsonl",
+        fix=True
+    )
+
+Return value:
+    True  -> No inconsistencies found (or fix mode executed successfully)
+    False -> Inconsistencies detected (in dry-run mode)
 """
+
 
 import os
 import re
@@ -28,6 +57,24 @@ def extract_episode_index(filename: str):
     m = re.search(r"episode_(\d+)\.parquet$", filename)
     return int(m.group(1)) if m else None
 
+def collect_parquet_files(root_dir: str):
+    files = {}
+    for root, _, filenames in os.walk(root_dir):
+        for fname in filenames:
+            if not fname.startswith("episode_") or not fname.endswith(".parquet"):
+                continue
+            ep = extract_episode_index(fname)
+            if ep is None:
+                continue
+            full_path = os.path.join(root, fname)
+            if ep in files:
+                raise ValueError(
+                    f"Duplicate episode index {ep:06d} found:\n"
+                    f"  {files[ep]}\n"
+                    f"  {full_path}"
+                )
+            files[ep] = full_path
+    return files
 
 def load_jsonl(path: str):
     with open(path, "r", encoding="utf-8") as f:
@@ -42,30 +89,49 @@ def write_jsonl(path: str, records):
     os.replace(tmp_path, path)
 
 
-def check_episode_length_func(
-    parquet_dir: str,
-    episode_jsonl_path: str,
-    fix: bool = False
-) -> bool:
+def check_episode_length_func(parquet_dir: str, episode_jsonl_path: str, fix: bool = False) -> bool:
     """
-    Check episode length consistency between parquet files and episodes.jsonl.
+    Validate episode length consistency between parquet files and episodes.jsonl.
 
-    If fix=True, update incorrect `length` fields in episodes.jsonl.
+    Parameters
+    ----------
+    parquet_dir : str
+        Root directory containing episode_XXXXXX.parquet files.
+        Files are recursively discovered.
 
-    Returns True if no mismatches found, False otherwise.
+    episode_jsonl_path : str
+        Path to episodes.jsonl containing per-episode metadata.
+        Each record must contain:
+            - "episode_index" (int)
+            - "length" (int)
+
+    fix : bool, default=False
+        If True, overwrite incorrect `length` fields in episodes.jsonl.
+        If False, perform validation only (dry-run mode).
+
+    Behavior
+    --------
+    - Reads parquet row count using metadata (no full file scan).
+    - Compares against recorded length in episodes.jsonl.
+    - Reports:
+        * Missing episodes in jsonl
+        * Length mismatches
+        * Episodes present in jsonl but missing parquet file
+    - Raises ValueError if duplicate parquet episode indices are found.
+
+    Returns
+    -------
+    bool
+        True  -> No mismatches found (dry-run), or fix mode completed.
+        False -> Mismatches detected in dry-run mode.
     """
     # Collect parquet episode lengths
-    parquet_lengths = {}
-    for fname in os.listdir(parquet_dir):
-        if not fname.endswith(".parquet"):
-            continue
-        ep = extract_episode_index(fname)
-        if ep is None:
-            raise ValueError(f"Unrecognized parquet filename: {fname}")
-        path = os.path.join(parquet_dir, fname)
-        parquet_lengths[ep] = pq.read_metadata(path).num_rows
+    parquet_lengths = {
+        ep: pq.read_metadata(path).num_rows
+        for ep, path in collect_parquet_files(parquet_dir).items()
+    }
     if not parquet_lengths:
-        print("[Error] No valid episode parquet files found.")
+        print("[ERROR] No valid episode parquet files found.")
         return False
 
     # Load stats
@@ -94,6 +160,13 @@ def check_episode_length_func(
             stat["length"] = parquet_len
             tqdm.write("        Fixed in episodes.jsonl\n")
 
+    json_episode_indices = set(stats_by_ep.keys())
+    parquet_episode_indices = set(parquet_lengths.keys())
+    extra_in_json = json_episode_indices - parquet_episode_indices
+    for ep in sorted(extra_in_json):
+        tqdm.write(f"[ERROR] Episode {ep:06d} exists in jsonl but missing parquet")
+        error_count += 1
+
     # Apply fixes
     if fix and error_count > 0:
         write_jsonl(episode_jsonl_path, stats)
@@ -105,6 +178,8 @@ def check_episode_length_func(
     print(f"Fix mode               : {fix}")
     print("========================================\n")
 
+    if fix:
+        return True
     return error_count == 0
 
 

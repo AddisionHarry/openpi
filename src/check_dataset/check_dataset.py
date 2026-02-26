@@ -25,7 +25,7 @@ CHECKS = [
     (
         "Compute Episode Stats",
         check_list.check_compute_episodes_stats_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta")), False)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta")), False)
     ),
     (
         "Delete Depth Info",
@@ -40,17 +40,17 @@ CHECKS = [
     (
         "Check Parquet Action Name",
         check_list.check_parquet_action_name_actions_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta", "info.json")), fix)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta", "info.json")), fix)
     ),
     (
         "Check Parquet Index Global Continuity",
         check_list.check_parquet_global_index_continuity_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), fix)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), fix)
     ),
     (
         "Check Parquet Episode Length",
         check_list.check_episode_length_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), str(os.path.join(dataset_dir, "meta", "episodes.jsonl")), fix)
+        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta", "episodes.jsonl")), fix)
     ),
     (
         "Check Info Consistency",
@@ -65,7 +65,7 @@ CHECKS = [
     (
         "Check Parquet Episode Index",
         check_list.check_parquet_episode_index_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data", "chunk-000")), fix)
+        lambda dataset_dir, fix: (dataset_dir, fix)
     ),
     (
         "Check Video Frames",
@@ -91,11 +91,11 @@ def main(dataset_dir: str, fix: bool = False):
             tqdm.write(f"[ERROR] {check_name} failed: {e}")
             results[check_name] = False
 
-    tqdm.write("\n================= CHECK SUMMARY =================")
-    for name, passed in results.items():
+    tqdm.write("\n================== CHECK SUMMARY ==================")
+    for idx, (name, passed) in enumerate(results.items(), 1):
         status = "PASSED " if passed else "FAILED "
-        tqdm.write(f"{name:40s} : {status}")
-    tqdm.write("=================================================\n")
+        tqdm.write(f"{idx:2d}. {name:38s} : {status}")
+    tqdm.write("==================================================\n")
 
 
 if __name__ == "__main__":

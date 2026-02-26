@@ -2,26 +2,49 @@
 """
 check_compute_episodes_stats.py
 
-Script to compute per-episode statistics from parquet files for LeRobot v2.1 format.
-Generates `episodes_stats.jsonl` in the specified output directory.
+Compute per-episode statistics from LeRobot v2.1 episode parquet files.
+
+This script recursively scans the given input directory for
+`episode_*.parquet` files (including nested chunk directories such as
+`chunk-000`, `chunk-001`, etc.), computes statistics for numeric columns
+in each episode, and writes the results to a JSONL file:
+
+    episodes_stats.jsonl
+
+Each line in the output file corresponds to one episode and contains:
+    {
+        "episode_index": <int>,
+        "stats": { ... }
+    }
 
 Command-line usage:
-    python check_compute_episodes_stats.py --input_dir </path/to/parquets> --output_dir </path/to/output> [--force]
+    python check_compute_episodes_stats.py \
+        --input_dir </path/to/dataset/data> \
+        --output_dir </path/to/dataset/meta> \
+        [--force]
 
 External interface usage:
-    from check_compute_episodes_stats import check_compute_episodes_stats
+    from check_compute_episodes_stats import check_compute_episodes_stats_func
+
     success = check_compute_episodes_stats_func(
-        input_dir="/path/to/parquets",
-        output_dir="/path/to/output",
+        input_dir="/path/to/dataset/data",
+        output_dir="/path/to/dataset/meta",
         force=False
     )
 """
+
 
 import os
 import json
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+
+import re
+
+def extract_episode_index(path: str) -> int:
+    m = re.search(r"episode_(\d+)\.parquet", path)
+    return int(m.group(1)) if m else -1
 
 def flatten_dict(d):
     """Flatten nested dicts into a 1D array preserving key order."""
@@ -73,24 +96,50 @@ def process_episode(parquet_path: str):
 
     return stats
 
+def collect_parquet_files(input_dir: str) -> list:
+    """Recursively collect all episode_*.parquet files."""
+    parquet_files = []
+    for root, _, files in os.walk(input_dir):
+        for f in files:
+            if f.startswith("episode_") and f.endswith(".parquet"):
+                parquet_files.append(os.path.join(root, f))
+    parquet_files.sort(key=extract_episode_index)
+    return parquet_files
+
 def check_compute_episodes_stats_func(input_dir: str, output_dir: str, force: bool = False) -> bool:
     """
-    Compute episode stats from parquet files.
+    Compute per-episode statistics from recursively collected
+    `episode_*.parquet` files.
+
+    The function scans `input_dir` recursively (e.g., across multiple
+    `chunk-*` subdirectories), extracts numeric columns from each episode
+    file, computes min/max/mean/std/count statistics, and writes results
+    to `episodes_stats.jsonl` in `output_dir`.
 
     Parameters
     ----------
     input_dir : str
-        Directory containing episode_*.parquet files
+        Root directory containing episode parquet files.
+        The directory may include nested chunk subdirectories
+        (e.g., chunk-000, chunk-001, ...).
+
     output_dir : str
-        Directory to write episodes_stats.jsonl
+        Directory where `episodes_stats.jsonl` will be written.
+
     force : bool
-        If True, overwrite existing stats file if present
+        If True, overwrite the existing stats file.
+        If False and the file already exists, no computation is performed.
 
     Returns
     -------
     bool
-        True if stats file was created successfully (or already exists and no errors),
-        False if output exists and force=False (check failed)
+        True if:
+            - The stats file was successfully written, or
+            - The file already exists and force=False.
+
+        False only if:
+            - No valid episode files were found, or
+            - An unrecoverable error occurred.
     """
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, "episodes_stats.jsonl")
@@ -105,15 +154,12 @@ def check_compute_episodes_stats_func(input_dir: str, output_dir: str, force: bo
         else:
             print(f"Will write new stats file to: {output_file}")
 
-    parquet_files = sorted([
-        os.path.join(input_dir, f)
-        for f in os.listdir(input_dir)
-        if f.endswith(".parquet")
-    ])
+    parquet_files = collect_parquet_files(input_dir)
     print(f"Found {len(parquet_files)} parquet files in {input_dir}")
 
     with open(output_file, "w") as fout:
-        for idx, fpath in enumerate(tqdm(parquet_files, desc="Processing episodes")):
+        for fpath in tqdm(parquet_files, desc="Processing episodes"):
+            idx = extract_episode_index(fpath)
             episode_stats = process_episode(fpath)
             fout.write(json.dumps({
                 "episode_index": idx,

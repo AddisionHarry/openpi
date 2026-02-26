@@ -2,19 +2,50 @@
 """
 check_parquet_global_index_continuity.py
 
-Check and optionally fix global `index` continuity across parquet files,
-ordered by episode index.
+Verify and optionally repair global `index` continuity across
+episode parquet files in a dataset directory.
+
+The script recursively scans the provided root directory for
+files matching the pattern `episode_*.parquet` (including nested
+subdirectories such as chunk folders), sorts them by episode index,
+and performs the following checks:
+
+1. Intra-file continuity:
+   Ensures that the `index` column within each parquet file increases
+   strictly by 1 without gaps.
+
+2. Inter-file continuity:
+   Ensures that the first index of each episode file matches the
+   expected global index based on the previous file, and that the
+   overall dataset starts from index 0.
+
+If --fix is enabled, the script rewrites each parquet file in-place,
+reconstructing a continuous global `index` column while preserving
+the original column type.
 
 Command-line usage:
-    python check_parquet_global_index_continuity.py --dir </path/to/parquet> [--fix]
+    python check_parquet_global_index_continuity.py \
+        --dir </path/to/dataset/root> \
+        [--fix]
 
 External interface usage:
-    from check_parquet_global_index_continuity import check_parquet_global_index_continuity_func
-    success = check_parquet_global_index_continuity_func("/path/to/parquet", fix=True)
+    from check_parquet_global_index_continuity import \
+        check_parquet_global_index_continuity_func
+
+    success = check_parquet_global_index_continuity_func(
+        directory="/path/to/dataset/root",
+        fix=True
+    )
+
+Return value:
+    True  -> No continuity errors detected (or successfully fixed)
+    False -> One or more continuity errors detected (check mode)
 """
+
 
 import os
 import re
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
@@ -25,50 +56,58 @@ def extract_episode_index(filename: str):
     m = re.search(r"episode_(\d+)\.parquet$", filename)
     return int(m.group(1)) if m else None
 
+def collect_parquet_files(root_dir: str):
+    """
+    Recursively collect (episode_index, absolute_path)
+    for all episode_*.parquet files.
+    """
+    files = []
+
+    for root, _, filenames in os.walk(root_dir):
+        for fname in filenames:
+            if not fname.startswith("episode_") or not fname.endswith(".parquet"):
+                continue
+
+            ep = extract_episode_index(fname)
+            if ep is not None:
+                full_path = os.path.join(root, fname)
+                files.append((ep, full_path))
+
+    files.sort(key=lambda x: x[0])
+    return files
 
 def check_parquet_global_index_continuity_func(directory: str, fix: bool = False) -> bool:
     """
-    Check global continuity of `index` across parquet files ordered by episode_index.
+    Recursively check global continuity of `index` across
+    episode_*.parquet files ordered by episode index.
 
     If fix=True, rewrite parquet files in-place with continuous global index.
-
-    Returns True if no errors found, False otherwise.
     """
-    files = []
-    for f in os.listdir(directory):
-        if not f.endswith(".parquet"):
-            continue
-        ep = extract_episode_index(f)
-        if ep is not None:
-            files.append((ep, f))
+    files = collect_parquet_files(directory)
     if not files:
         print(f"[Error]No valid episode parquet files found in {directory}.")
         return False
-    files.sort(key=lambda x: x[0])
     mode = "FIX MODE (FILES WILL BE MODIFIED)" if fix else "DRY RUN (NO MODIFICATION)"
     print(f"Checking {len(files)} parquet files... [{mode}]\n")
     error_count = 0
     global_expected_index = None
     rewrite_tables = []
-    for _, fname in tqdm(files, desc="Checking"):
-        path = os.path.join(directory, fname)
+    # for _, fname in tqdm(files, desc="Checking"):
+    for _, path in tqdm(files, desc="Checking"):
+        fname = os.path.basename(path)
         table = pq.read_table(path)
         if "index" not in table.column_names:
             tqdm.write(f"[ERROR] Missing `index` column in {fname}")
             error_count += 1
             continue
-        index_col = table["index"].to_pylist()
-        if not index_col:
+        index_col = table["index"].to_numpy()
+        if len(index_col) == 0:
             continue
         # check intra-file continuity
-        for i in range(1, len(index_col)):
-            if index_col[i] != index_col[i - 1] + 1:
-                tqdm.write(
-                    f"[ERROR] Non-continuous index inside {fname}: "
-                    f"{index_col[i - 1]} -> {index_col[i]}"
-                )
-                error_count += 1
-                break
+        if not np.all(index_col[1:] == index_col[:-1] + 1):
+            tqdm.write(f"[ERROR] Non-continuous index inside {fname}")
+            error_count += 1
+            continue
         # check inter-file continuity
         first_idx = index_col[0]
         last_idx = index_col[-1]
@@ -92,26 +131,15 @@ def check_parquet_global_index_continuity_func(directory: str, fix: bool = False
                 )
                 error_count += 1
         if fix:
-            new_indices = list(
-                range(global_expected_index, global_expected_index + len(index_col))
-            )
+            new_indices = np.arange(global_expected_index, global_expected_index + len(index_col))
             new_col = pa.array(new_indices)
-            table = table.set_column(
-                table.column_names.index("index"),
-                "index",
-                new_col
-            )
-            rewrite_tables.append((path, table))
-        global_expected_index = last_idx + 1 if not fix else global_expected_index + len(index_col)
-
-    # Apply fixes
-    if fix:
-        tqdm.write("\nApplying fixes...")
-        for path, table in rewrite_tables:
+            table = table.set_column(table.column_names.index("index"), "index",new_col)
             tmp_path = path + ".tmp"
             pq.write_table(table, tmp_path)
             os.replace(tmp_path, path)
-        tqdm.write("All parquet files rewritten with continuous global index.")
+            global_expected_index += len(index_col)
+        else:
+            global_expected_index = last_idx + 1
 
     print("\n================ SUMMARY ================")
     print(f"Total parquet files checked : {len(files)}")

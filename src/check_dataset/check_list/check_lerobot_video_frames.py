@@ -2,18 +2,32 @@
 """
 check_lerobot_video_frames.py
 
-Script to verify video frame counts against JSONL episode records in LeRobot datasets.
+Verify video frame counts in LeRobot datasets against JSONL episode records.
+
+This script automatically scans all 'chunk-*' directories under 'videos/' and compares
+the actual frame counts of each perspective video against the expected length recorded
+in 'meta/episodes.jsonl'. It reports any discrepancies and can optionally be used
+as an external function.
 
 Command-line usage:
-    python check_lerobot_video_frames.py --dataset-root </path/to/dataset> --frame-threshold 1
+    python check_lerobot_video_frames.py --dataset-root </path/to/dataset> [--frame-threshold N]
+
+    --dataset-root      Path to the root of the LeRobot dataset (must contain meta/episodes.jsonl
+                        and videos/chunk-* directories)
+    --frame-threshold   Maximum allowed difference between actual and expected frames (default: 5)
 
 External interface usage:
-    from check_lerobot_video_frames import check_lerobot_video_frames
+    from check_lerobot_video_frames import check_lerobot_video_frames_func
     success = check_lerobot_video_frames_func("/path/to/dataset", frame_diff_threshold=1)
+
+Returns True if all videos match the expected frame counts within the threshold,
+False if any abnormalities are found.
 """
+
 
 import os
 import json
+import glob
 from typing import Dict, List
 from tqdm import tqdm
 import ffmpeg
@@ -63,30 +77,21 @@ def load_jsonl_episodes(jsonl_path: str) -> Dict[int, int]:
     return episodes
 
 
-def check_episode_video_mismatch(
-    dataset_root: str,
-    chunk_name: str = "chunk-000",
-    frame_diff_threshold: int = 5
-) -> List[Dict]:
+def check_episode_video_mismatch(dataset_root: str, frame_diff_threshold: int = 5) -> List[Dict]:
     """
     Compare actual video frame counts with JSONL records.
     Returns list of abnormal episodes.
     """
     jsonl_path = os.path.join(dataset_root, "meta", "episodes.jsonl")
-    video_root = os.path.join(dataset_root, "videos", chunk_name)
+    video_root_pattern = os.path.join(dataset_root, "videos", "chunk-*")
+    video_chunks = sorted(glob.glob(video_root_pattern))
+
     camera_views = [
         "observation.images.chest_rgb",
         "observation.images.head_rgb",
         "observation.images.left_wrist_rgb",
         "observation.images.right_wrist_rgb"
     ]
-
-    if not os.path.exists(video_root):
-        raise FileNotFoundError(f"Video chunk path does not exist: {video_root}")
-    for view in camera_views:
-        view_path = os.path.join(video_root, view)
-        if not os.path.exists(view_path):
-            raise FileNotFoundError(f"Perspective directory does not exist: {view_path}")
 
     tqdm.write(f"Loading JSONL file: {jsonl_path}")
     ep_expected_length = load_jsonl_episodes(jsonl_path)
@@ -97,18 +102,33 @@ def check_episode_video_mismatch(
     abnormal_episodes = []
     sorted_ep_indices = sorted(ep_expected_length.keys())
     tqdm.write(f"\nStarting verification of video frame counts for {len(sorted_ep_indices)} episodes "
-               f"(error threshold: {frame_diff_threshold} frames)")
+            f"(error threshold: {frame_diff_threshold} frames)")
+
+    episode_to_chunk = {}
+    for chunk_path in video_chunks:
+        chest_dir = os.path.join(chunk_path, "observation.images.chest_rgb")
+        if not os.path.exists(chest_dir):
+            continue
+        for mp4 in glob.glob(os.path.join(chest_dir, "episode_*.mp4")):
+            ep_idx = int(os.path.basename(mp4).split("_")[1].split(".")[0])
+            episode_to_chunk[ep_idx] = chunk_path
 
     for ep_idx in tqdm(sorted_ep_indices, desc="Verification progress"):
         expected_frames = ep_expected_length[ep_idx]
+        if ep_idx not in episode_to_chunk:
+            tqdm.write(f"[WARN] Episode {ep_idx:06d} not found in any chunk")
+            continue
+
+        chunk_path = episode_to_chunk[ep_idx]
         video_filename = f"episode_{ep_idx:06d}.mp4"
         view_actual_frames = {}
         is_abnormal = False
 
         for view in camera_views:
-            video_path = os.path.join(video_root, view, video_filename)
+            view_path = os.path.join(chunk_path, view)
+            video_path = os.path.join(view_path, video_filename)
             actual_frames = get_video_actual_frames(video_path)
-            view_actual_frames[view] = actual_frames
+            view_actual_frames[f"{os.path.basename(chunk_path)}/{view}"] = actual_frames
             if actual_frames == -1 or abs(actual_frames - expected_frames) > frame_diff_threshold:
                 is_abnormal = True
 
@@ -120,6 +140,7 @@ def check_episode_video_mismatch(
                 else:
                     view_frame_diffs[view] = f"{actual} (difference: {abs(actual - expected_frames)} frames)"
             abnormal_episodes.append({
+                "chunk": os.path.basename(chunk_path),
                 "episode_index": ep_idx,
                 "expected_frames": expected_frames,
                 "actual_frames_per_view": view_frame_diffs,
@@ -169,7 +190,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset-root",
         required=True,
-        help="Dataset root path (must contain meta/episodes.jsonl and videos/chunk-000)"
+        help="Dataset root path (must contain meta/episodes.jsonl and videos/chunk-*)"
     )
     parser.add_argument(
         "--frame-threshold",

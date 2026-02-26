@@ -526,42 +526,22 @@ class PackActionTransform:
         self.use_waist = use_waist
 
     def __call__(self, data):
-        if self.use_arms[0] and not self.use_arms[1]:
+        actions_list = []
+        if self.use_arms[0]:
             # Left arm joints + left hand joints
-            left_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_arm_joint"]]
-            # left_hand_joints = data["teleoperate_action_states"][0:6]
-            # left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
+            left_arm_action = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_tcp" if self.use_tcp_pose else "left_arm_joint"]]
             left_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_hand_joint"]]
-            base_actions = torch.cat([left_arm_joints, left_hand_joints], dim=1)
-        elif not self.use_arms[0] and self.use_arms[1]:
+            actions_list.extend([left_arm_action, left_hand_joints])
+        if self.use_arms[1]:
             # Right arm joints + right hand joints
-            right_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_arm_joint"]]
-            # right_hand_joints = data["teleoperate_action_states"][6:12]
-            # right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
+            right_arm_action = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_tcp" if self.use_tcp_pose else "right_arm_joint"]]
             right_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
-            base_actions = torch.cat([right_arm_joints, right_hand_joints], dim=1)
-        elif self.use_arms[0] and self.use_arms[1]:
-            # Left arm joints + left hand joints + right arm joints + right hand joints
-            left_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_arm_joint"]]
-            # left_hand_joints = data["teleoperate_action_states"][0:6]
-            # left_hand_joints = left_hand_joints.unsqueeze(0).expand(left_arm_joints.size(0), -1)
-            left_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["left_hand_joint"]]
-
-            right_arm_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_arm_joint"]]
-            # right_hand_joints = data["teleoperate_action_states"][6:12]
-            # right_hand_joints = right_hand_joints.unsqueeze(0).expand(right_arm_joints.size(0), -1)
-            right_hand_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["right_hand_joint"]]
-
-            base_actions = torch.cat([left_arm_joints, left_hand_joints, right_arm_joints, right_hand_joints], dim=1)
-        elif not self.use_arms[0] and not self.use_arms[1]:
+            actions_list.extend([right_arm_action, right_hand_joints])
+        if not self.use_arms[0] and not self.use_arms[1]:
             raise ValueError("At least one arm must be used.")
-
         if self.use_waist:
-            waist_joints = data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["waist_joint"]]
-            data["actions"] = torch.cat([base_actions, waist_joints], dim=1)
-        else:
-            data["actions"] = base_actions
-
+            actions_list.append(data["actions"][:, ZJ_HUMANOID_JOINT_SLICES["waist_joint"]])
+        data["actions"] = torch.cat(actions_list, dim=1)
         return data
 
 class SetHandAlignState:
@@ -595,7 +575,7 @@ class DataTransformFn(Protocol):
             The transformed data. Could be the input `data` that was modified in place, or a new data structure.
         """
 
-def quat_xyzw_to_wxyz(quat: torch.Tensor) -> torch.Tensor:
+def _quat_xyzw_to_wxyz(quat: torch.Tensor) -> torch.Tensor:
     """
     Convert quaternion from xyzw convention to wxyz convention.
 
@@ -608,7 +588,7 @@ def quat_xyzw_to_wxyz(quat: torch.Tensor) -> torch.Tensor:
     return torch.cat([quat[..., 3:], quat[..., :3]], dim=-1)
 
 
-def quat_wxyz_to_xyzw(quat: torch.Tensor) -> torch.Tensor:
+def _quat_wxyz_to_xyzw(quat: torch.Tensor) -> torch.Tensor:
     """
     Convert quaternion from wxyz convention to xyzw convention.
 
@@ -620,6 +600,40 @@ def quat_wxyz_to_xyzw(quat: torch.Tensor) -> torch.Tensor:
     """
     return torch.cat([quat[..., 1:], quat[..., :1]], dim=-1)
 
+def _normalize_quaternion(quat: torch.Tensor, strict: bool = False, name: str = "quat", tol: float = 1e-3, eps: float = 1e-8) -> torch.Tensor:
+    """
+    Normalize quaternion with norm validation.
+
+    Args:
+        quat: (..., 4) tensor
+        tol: allowed deviation from unit norm before warning/error
+        eps: numerical stability term to avoid division by zero
+        strict: if True, raise RuntimeError when deviation > tol
+        name: name used in error message
+
+    Returns:
+        normalized quaternion (..., 4)
+    """
+    if quat.shape[-1] != 4:
+        raise ValueError(f"{name} last dimension must be 4, got {quat.shape}")
+    if not torch.isfinite(quat).all():
+        raise ValueError(f"{name} contains NaN or Inf")
+
+    norm: torch.Tensor = torch.linalg.norm(quat, dim=-1, keepdim=True)
+    if (norm < eps).any():
+        raise ValueError(f"{name} contains zero-norm quaternion")
+
+    deviation = (norm - 1.0).abs()
+    max_dev = deviation.max().item()
+    if max_dev > tol:
+        msg = f"{name} max norm deviation from 1 is {max_dev:.6f}"
+        if strict:
+            raise RuntimeError(msg)
+        else:
+            print(f"[WARNING] {msg}")
+
+    quat_normalized = quat / norm.clamp_min(eps)
+    return quat_normalized
 
 @dataclasses.dataclass(frozen=True)
 class DeltaPoseAction(DataTransformFn):
@@ -631,35 +645,6 @@ class DeltaPoseAction(DataTransformFn):
     base_world: bool = False
 
     def __call__(self, data: DataDict) -> DataDict:
-        # if "actions" not in data or "state" not in data:
-        #     return data
-        # state, actions = np.asarray(data["state"]), np.asarray(data["actions"])
-
-        # if self.action_mask is None or len(self.action_mask) != actions.shape[-1]:
-        #     return data
-        # action_mask = np.asarray(self.action_mask, dtype=bool)
-        # action_indices = np.where(action_mask)[0]
-        # if len(action_indices) != 7 or (action_indices[-1] - action_indices[0]) != 6:
-        #     return data
-        # action_pos_idx, action_quat_idx = action_indices[..., :3], action_indices[..., 3:7]
-
-        # if self.state_mask is not None and len(self.state_mask) != state.shape[-1]:
-        #     return data
-        # state_mask = np.asarray(self.state_mask, dtype=bool)
-        # state_indices = np.where(state_mask)[0]
-        # if len(state_indices) != 7 or (state_indices[-1] - state_indices[0]) != 6:
-        #     return data
-        # state_pos_idx, state_quat_idx = state_indices[..., :3], state_indices[..., 3:7]
-
-        # delta_pos = actions[..., action_pos_idx] - state[..., state_pos_idx] if self.base_world else ...
-        # state_ori = Rotation.from_quat(state[..., state_quat_idx])
-        # action_ori = Rotation.from_quat(actions[..., action_quat_idx])
-        # delta_rotvec = (action_ori * state_ori.inv()).as_rotvec() if self.base_world else (state_ori.inv() * action_ori).as_rotvec()
-        # delta_pose = np.concatenate([delta_pos, delta_rotvec], axis=-1)
-
-        # data["actions"] = np.concatenate([actions[..., :action_indices[0]], delta_pose, actions[..., action_indices[-1] + 1:]],
-        #                                  axis=-1)
-        # return data
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         actions = torch.as_tensor(data["actions"], device=device, dtype=torch.float32)
         state = torch.as_tensor(data["state"], device=device, dtype=torch.float32)
@@ -680,15 +665,17 @@ class DeltaPoseAction(DataTransformFn):
             return data
         state_pos_idx, state_quat_idx = state_indices[:3], state_indices[3:7]
 
-        state_quat = state[..., state_quat_idx]
-        action_quat = actions[..., action_quat_idx]
-        R_state = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(state_quat))
-        R_action = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(action_quat))
+        state_quat = _normalize_quaternion(state[..., state_quat_idx], name="state_quat")
+        action_quat = _normalize_quaternion(actions[..., action_quat_idx], name="action_quat")
+        R_state = K.quaternion_to_rotation_matrix(_quat_xyzw_to_wxyz(state_quat))
+        R_action = K.quaternion_to_rotation_matrix(_quat_xyzw_to_wxyz(action_quat))
 
-        delta_pos = actions[..., action_pos_idx] - state[..., state_pos_idx] if self.base_world else \
-            torch.squeeze(R_state.transpose(-1, -2) @ (actions[..., action_pos_idx] - state[..., state_pos_idx]).unsqueeze(-1))
-        R_delta = torch.matmul(R_action, R_state.transpose(-2, -1)) if self.base_world else \
-            torch.matmul(R_state.transpose(-2, -1), R_action)
+        if self.base_world:
+            delta_pos = actions[..., action_pos_idx] - state[..., state_pos_idx]
+            R_delta = torch.matmul(R_action, R_state.transpose(-2, -1))
+        else:
+            delta_pos = torch.squeeze(R_state.transpose(-1, -2) @ (actions[..., action_pos_idx] - state[..., state_pos_idx]).unsqueeze(-1))
+            R_delta = torch.matmul(R_state.transpose(-2, -1), R_action)
         delta_rotvec = K.rotation_matrix_to_axis_angle(R_delta)
         delta_pose = torch.cat([delta_pos, delta_rotvec], dim=-1)
 
@@ -699,7 +686,6 @@ class DeltaPoseAction(DataTransformFn):
         ], dim=-1)
         data["actions"] = actions_new.cpu().numpy()
         return data
-
 
 
 @dataclasses.dataclass(frozen=True)
@@ -736,7 +722,7 @@ class AbsolutePoseAction(DataTransformFn):
         action_pos_idx, action_rotvec_idx = action_indices[:3], action_indices[3:6]
 
         state_quat = state[..., state_quat_idx]  # (...,4)
-        R_state = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(state_quat))
+        R_state = K.quaternion_to_rotation_matrix(_quat_xyzw_to_wxyz(state_quat))
         delta_rotvec = actions[..., action_rotvec_idx]  # (...,3)
         R_delta = K.axis_angle_to_rotation_matrix(delta_rotvec)
 
@@ -744,7 +730,7 @@ class AbsolutePoseAction(DataTransformFn):
             torch.squeeze(R_state @ actions[..., action_pos_idx].unsqueeze(-1)) + state[..., state_pos_idx]
 
         R_abs = torch.matmul(R_delta, R_state) if self.base_world else torch.matmul(R_state, R_delta)
-        quat_abs = quat_wxyz_to_xyzw(K.rotation_matrix_to_quaternion(R_abs))  # (...,4)
+        quat_abs = _quat_wxyz_to_xyzw(K.rotation_matrix_to_quaternion(R_abs))  # (...,4)
 
         abs_pose = torch.cat([pos_abs, quat_abs], dim=-1)
         actions_new = torch.cat([
@@ -841,9 +827,9 @@ class PoseActionTransformFrame(DataTransformFn):
 
         if use_quat:
             # quaternion: (...,4)
-            R_ori = K.quaternion_to_rotation_matrix(quat_xyzw_to_wxyz(orientations))  # (...,3,3)
+            R_ori = K.quaternion_to_rotation_matrix(_quat_xyzw_to_wxyz(orientations))  # (...,3,3)
             R_transformed = R_T @ R_ori  # left-multiply transform
-            orientations_transformed = quat_wxyz_to_xyzw(K.rotation_matrix_to_quaternion(R_transformed))
+            orientations_transformed = _quat_wxyz_to_xyzw(K.rotation_matrix_to_quaternion(R_transformed))
         else:
             # rotvec: (...,3)
             R_ori = K.axis_angle_to_rotation_matrix(orientations)  # (...,3,3)
@@ -2479,6 +2465,118 @@ _CONFIGS = [
     ),
     TrainConfig(
         # Change the name to reflect your model and dataset.
+        name="pi05_industrial_sorting_tcp_pose_20260224_absolute",
+        project_name="industrial_sorting",
+        assets_base_dir="/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125",
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi05_industrial_sorting_tcp_pose_reshape_videos_expend_last_frames",
+            assets=AssetsConfig(
+                assets_dir="/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125",
+                asset_id="pi05_industrial_sorting_tcp_pose_20260224_absolute",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=True,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=False,
+            use_hand_align_state=False,
+            hand_align_state_chest_image_mask_prob=0.0,
+            hand_align_state_idx=64,
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=1e-4,
+            decay_steps=22_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=32,
+        # num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
+        name="pi05_industrial_sorting_tcp_pose_20260224_relative_chest_camera",
+        project_name="industrial_sorting",
+        assets_base_dir="/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125",
+        # Here you define the model config -- In this example we use pi0 as the model
+        # architecture and perform *full* finetuning. in the examples below we show how to modify
+        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+        model=pi0_config.Pi0Config(pi05=True),
+        # Here you define the dataset you are training on. In this example we use the Libero
+        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
+        # Also modify the DataConfig to use the new config you made for your dataset above.
+        data=LeRobotZJHumanoidDataConfig(
+            repo_id="zj-humanoid/pi05_industrial_sorting_tcp_pose_reshape_videos_expend_last_frames",
+            assets=AssetsConfig(
+                assets_dir="/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260125",
+                asset_id="pi05_industrial_sorting_tcp_pose_20260224_relative_chest_camera",
+            ),
+            base_config=DataConfig(
+                # This flag determines whether we load the prompt (i.e. the task instruction) from the
+                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+                # a field called ``prompt`` in the input dict. The recommended setting is True.
+                prompt_from_task=True,
+            ),
+            extra_delta_transform=False,
+            tcp_pose_in_wrist=False,
+            use_tcp_pose=True,
+            use_arms=[False, True],
+            use_wrist_cameras=[False, True],
+            obs_use_waist_angles=True,
+            action_use_waist_angles=False,
+            use_hand_align_state=False,
+            hand_align_state_chest_image_mask_prob=0.0,
+            hand_align_state_idx=64,
+        ),
+        # Here you define which pre-trained checkpoint you want to load to initialize the model.
+        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1500,
+            peak_lr=1e-4,
+            decay_steps=22_000,
+            decay_lr=2e-6,
+        ),
+        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+        # Check the base TrainConfig class for a full list of available hyperparameters.
+        num_train_steps=25_000,
+        log_interval=50,
+        save_interval=1000,
+        keep_period=20_000,
+        batch_size=32,
+        # num_workers=8,
+        force_offline_dataset=True,
+        val_fraction=0.0,
+        # wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Change the name to reflect your model and dataset.
         name="pi05_industrial_sorting_joint_waist_manually_cleaned20251229",
         assets_base_dir="/root/openpi/assets/pi05_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20251214",
         # Here you define the model config -- In this example we use pi0 as the model
@@ -2826,108 +2924,6 @@ _CONFIGS = [
         # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
         # Check the base TrainConfig class for a full list of available hyperparameters.
         num_train_steps=30_000,
-        log_interval=25,
-        save_interval=500,
-        keep_period=20_000,
-        batch_size=16,
-        num_workers=15,
-        force_offline_dataset=True,
-        # wandb_enabled=False,
-    ),
-    TrainConfig(
-        # Change the name to reflect your model and dataset.
-        name="pi05_zjhumanoid_cloth_joint_space",
-        assets_base_dir="/root/openpi/assets/cloths/zj-humanoid",
-        # Here you define the model config -- In this example we use pi0 as the model
-        # architecture and perform *full* finetuning. in the examples below we show how to modify
-        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
-        model=pi0_config.Pi0Config(pi05=True),
-        # Here you define the dataset you are training on. In this example we use the Libero
-        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
-        # Also modify the DataConfig to use the new config you made for your dataset above.
-        data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/pi05_zjhumanoid_cloth_joint_space",
-            assets=AssetsConfig(
-                assets_dir="/root/openpi/assets/cloths/zj-humanoid/pi05_zjhumanoid_cloth_joint_space",
-                asset_id="pi05_zjhumanoid_cloth_joint_space",
-            ),
-            base_config=DataConfig(
-                # This flag determines whether we load the prompt (i.e. the task instruction) from the
-                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
-                # a field called ``prompt`` in the input dict. The recommended setting is True.
-                prompt_from_task=True,
-            ),
-            extra_delta_transform=False,
-            tcp_pose_in_wrist=False,
-            use_tcp_pose=False,
-            use_arms=[True, True],
-            use_wrist_cameras=[True, True],
-            obs_use_waist_angles=True,
-            action_use_waist_angles=False
-        ),
-        # Here you define which pre-trained checkpoint you want to load to initialize the model.
-        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1500,
-            peak_lr=1e-5,
-            decay_steps=30_000,
-            decay_lr=5e-7,
-        ),
-        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
-        # Check the base TrainConfig class for a full list of available hyperparameters.
-        num_train_steps=35_000,
-        log_interval=25,
-        save_interval=500,
-        keep_period=20_000,
-        batch_size=16,
-        num_workers=15,
-        force_offline_dataset=True,
-        # wandb_enabled=False,
-    ),
-    TrainConfig(
-        # Change the name to reflect your model and dataset.
-        name="pi05_zjhumanoid_cloth_absolute_tcp_pose",
-        assets_base_dir="/root/openpi/assets/cloths/zj-humanoid",
-        # Here you define the model config -- In this example we use pi0 as the model
-        # architecture and perform *full* finetuning. in the examples below we show how to modify
-        # this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
-        model=pi0_config.Pi0Config(pi05=True),
-        # Here you define the dataset you are training on. In this example we use the Libero
-        # dataset. For your own dataset, you can change the repo_id to point to your dataset.
-        # Also modify the DataConfig to use the new config you made for your dataset above.
-        data=LeRobotZJHumanoidDataConfig(
-            repo_id="zj-humanoid/pi05_zjhumanoid_cloth_absolute_tcp_pose",
-            assets=AssetsConfig(
-                assets_dir="/root/openpi/assets/cloths/zj-humanoid/pi05_zjhumanoid_cloth_absolute_tcp_pose",
-                asset_id="pi05_zjhumanoid_cloth_absolute_tcp_pose",
-            ),
-            base_config=DataConfig(
-                # This flag determines whether we load the prompt (i.e. the task instruction) from the
-                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
-                # a field called ``prompt`` in the input dict. The recommended setting is True.
-                prompt_from_task=True,
-            ),
-            extra_delta_transform=False,
-            tcp_pose_in_wrist=False,
-            use_tcp_pose=True,
-            use_arms=[True, True],
-            use_wrist_cameras=[True, True],
-            obs_use_waist_angles=True,
-            action_use_waist_angles=False
-        ),
-        # Here you define which pre-trained checkpoint you want to load to initialize the model.
-        # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1500,
-            peak_lr=1e-5,
-            decay_steps=30_000,
-            decay_lr=5e-7,
-        ),
-        # Below you can define other hyperparameters like the learning rate, number of training steps, etc.
-        # Check the base TrainConfig class for a full list of available hyperparameters.
-        num_train_steps=35_000,
         log_interval=25,
         save_interval=500,
         keep_period=20_000,

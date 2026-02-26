@@ -2,21 +2,31 @@
 """
 check_dataset_info_consistency.py
 
-Check and optionally fix consistency between:
-- meta/info.json
-- data/chunk-000/*.parquet
-- videos/chunk-000/*/*.mp4
+Check and optionally fix consistency of a dataset by comparing:
+- meta/info.json metadata
+- all parquet files under data/chunk-*/episode_*.parquet
+- all videos under videos/chunk-*/<camera>/episode_*.mp4 or .avi
+
+Features verified include:
+- total episodes, frames, videos
+- non-video feature shapes
+- video feature resolutions
 
 Command-line usage:
     python check_dataset_info_consistency.py --dataset-root <path> [--fix]
 
-External interface:
-    from check_dataset_info_consistency import check_dataset_info_consistency
-    success = check_dataset_info_consistency(
-        dataset_root="/path/to/parquets",
+External interface usage:
+    from check_dataset_info_consistency import check_dataset_info_consistency_func
+    success = check_dataset_info_consistency_func(
+        dataset_root="/path/to/dataset",
         fix=False
     )
+
+Notes:
+- Supports multiple data/video chunks (chunk-000, chunk-001, etc.)
+- In fix mode (--fix), updates info.json if mismatches are found
 """
+
 
 import json
 from pathlib import Path
@@ -52,31 +62,38 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
     root = Path(dataset_root)
 
     info_path = root / "meta/info.json"
-    data_dir = root / "data/chunk-000"
-    video_root = root / "videos/chunk-000"
+
+    data_chunks = sorted((root / "data").glob("chunk-*"))
+    video_chunks = sorted((root / "videos").glob("chunk-*"))
 
     info = load_json(info_path)
     features = info.get("features", {})
 
-    # Get parquet files with progress bar
-    tqdm.write("Scanning parquet files...")
-    parquet_files = sorted(data_dir.glob("episode_*.parquet"))
-    if not parquet_files:
-        tqdm.write("[ERROR] No parquet files found")
-        return False
+    total_episodes_real = 0
+    total_frames_real = 0
+    parquet_files_all = []
+
+    for chunk_dir in data_chunks:
+        parquet_files = sorted(chunk_dir.glob("episode_*.parquet"))
+        total_episodes_real += len(parquet_files)
+        parquet_files_all.extend(parquet_files)
+        for p in parquet_files:
+            df = pd.read_parquet(p, columns=["frame_index"])
+            total_frames_real += len(df)
 
     errors = 0
 
-    # Get Episode / frame / video counts with progress
-    total_episodes_real = len(parquet_files)
+    total_videos_real = 0
+    for chunk_dir in video_chunks:
+        for feat_name, feat_info in features.items():
+            if feat_info.get("dtype") != "video":
+                continue
+            cam_dir = chunk_dir / feat_name
+            if not cam_dir.exists():
+                continue
+            mp4s = sorted(list(cam_dir.glob("episode_*.mp4")) + list(cam_dir.glob("episode_*.avi")))
+            total_videos_real += len(mp4s)
 
-    tqdm.write("Counting frames in parquet files...")
-    total_frames_real = 0
-    for p in tqdm(parquet_files, desc="Processing parquet files"):
-        df = pd.read_parquet(p, columns=["frame_index"])
-        total_frames_real += len(df)
-
-    total_videos_real = total_episodes_real
 
     def check_field(name: str, real: int, info, errors: int):
         recorded = info.get(name)
@@ -96,7 +113,7 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
 
     # Feature shape check (non-image) with progress
     tqdm.write("Checking non-image features...")
-    sample_df = pd.read_parquet(parquet_files[0])
+    sample_df = pd.read_parquet(parquet_files_all[0])
 
     for feat_name, feat_info in tqdm(features.items(), desc="Checking features"):
         if feat_info.get("dtype") == "video":
@@ -136,32 +153,33 @@ def check_dataset_info_consistency_func(dataset_root: str, fix: bool = False) ->
         if feat_info.get("dtype") != "video":
             continue
 
-        cam_dir = video_root / feat_name
-        if not cam_dir.exists():
-            tqdm.write(f"[ERROR] video dir missing: {cam_dir}")
-            errors += 1
-            continue
+        for chunk_dir in video_chunks:
+            cam_dir = chunk_dir / feat_name
+            if not cam_dir.exists():
+                tqdm.write(f"[ERROR] video dir missing: {cam_dir}")
+                errors += 1
+                continue
 
-        mp4s = sorted(list(cam_dir.glob("episode_*.mp4")) + list(cam_dir.glob("episode_*.avi")))
-        if not mp4s:
-            tqdm.write(f"[ERROR] no videos in {cam_dir}")
-            errors += 1
-            continue
+            mp4s = sorted(list(cam_dir.glob("episode_*.mp4")) + list(cam_dir.glob("episode_*.avi")))
+            if not mp4s:
+                tqdm.write(f"[ERROR] no videos in {cam_dir}")
+                errors += 1
+                continue
 
-        real_shape = get_video_shape(mp4s[0])
-        recorded_shape = feat_info["shape"]
+            real_shape = get_video_shape(mp4s[0])
+            recorded_shape = feat_info["shape"]
 
-        if real_shape[:-1] != recorded_shape[:-1]:
-            tqdm.write(
-                f"[ERROR] image feature '{feat_name}' shape mismatch: "
-                f"info={recorded_shape}, video={real_shape}"
-            )
-            errors += 1
-            if fix:
-                feat_info["shape"] = real_shape[:-1] + feat_info["shape"][-1]
+            if real_shape[:-1] != recorded_shape[:-1]:
                 tqdm.write(
-                    f"[FIXED] image feature '{feat_name}' shape -> {real_shape}"
+                    f"[ERROR] image feature '{feat_name}' shape mismatch: "
+                    f"info={recorded_shape}, video={real_shape}"
                 )
+                errors += 1
+                if fix:
+                    feat_info["shape"] = real_shape[:-1] + feat_info["shape"][-1]
+                    tqdm.write(
+                        f"[FIXED] image feature '{feat_name}' shape -> {real_shape}"
+                    )
 
     # Save if fixed
     if fix and (errors > 0):
