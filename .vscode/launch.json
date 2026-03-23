@@ -11,7 +11,7 @@
                 "--config-name",
                 "pi05_zjhumanoid_grasp_can_relative_trajectory"
             ],
-            "python": "/root/openpi/.venv/bin/python",
+            "python": "/root/workspace/openpi/.venv/bin/python",
             "env": {
                 "ROOT": "/mnt/pfs/openpi_train_data/huggingface_root",
                 "HF_HOME": "/mnt/pfs/openpi_train_data/huggingface_root/.cache/huggingface",
@@ -37,7 +37,7 @@
                 "--exp-name=relative",
                 "--overwrite"
             ],
-            "python": "/root/openpi/.venv/bin/python",
+            "python": "/root/workspace/openpi/.venv/bin/python",
             "env": {
                 "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
                 "ROOT": "/mnt/pfs/openpi_train_data/huggingface_root",
@@ -66,7 +66,7 @@
             "pathMappings": [
                 {
                     "localRoot": "${workspaceFolder}",
-                    "remoteRoot": "/root/openpi"
+                    "remoteRoot": "/root/workspace/openpi"
                 }
             ],
             "justMyCode": false
@@ -82,7 +82,7 @@
             "pathMappings": [
                 {
                     "localRoot": "${workspaceFolder}",
-                    "remoteRoot": "/root/openpi"
+                    "remoteRoot": "/root/workspace/openpi"
                 }
             ],
             "justMyCode": false

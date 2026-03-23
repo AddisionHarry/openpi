@@ -40,7 +40,7 @@ from tqdm import tqdm
 def load_fps_and_pos_joints(
     dataset_root: Path,
     exclude_neck: bool,
-) -> Tuple[float, List[int], List[str]]:
+) -> Tuple[float, List[int], List[str], List[str]]:
     """
     Load fps and filtered *_pos joint indices/names from meta/info.json
     """
@@ -53,6 +53,7 @@ def load_fps_and_pos_joints(
 
     try:
         fps = float(info["fps"])
+        obs_names = info["features"]["observation.state"]["names"]
         action_names = info["features"]["actions"]["names"]
     except KeyError as e:
         raise KeyError(f"Missing key in meta/info.json: {e}")
@@ -78,7 +79,7 @@ def load_fps_and_pos_joints(
             f"(exclude_neck={exclude_neck})"
         )
 
-    return fps, pos_indices, pos_names
+    return fps, pos_indices, pos_names, obs_names
 
 
 # ============================================================
@@ -99,7 +100,7 @@ def check_action_observation_consistency_func(
     if not data_root.exists():
         raise FileNotFoundError(f"data directory not found: {data_root}")
 
-    fps, pos_indices, pos_names = load_fps_and_pos_joints(
+    fps, pos_indices, pos_names, obs_names = load_fps_and_pos_joints(
         dataset_root,
         exclude_neck=exclude_neck,
     )
@@ -136,12 +137,16 @@ def check_action_observation_consistency_func(
             act = np.asarray(row["actions"], dtype=np.float32)
 
             if obs.shape != act.shape:
-                tqdm.write(
-                    f"[ERROR] {fpath.name} frame={row['frame_index']} "
-                    f"shape mismatch: obs={obs.shape}, act={act.shape}"
-                )
-                error_frames += 1
-                continue
+                if (len(obs.shape) == 1) and (len(act.shape) == 1) and \
+                    (obs.shape[0] - 1 == act.shape[0]) and ("hand_align_state" in obs_names):
+                    pass
+                else:
+                    tqdm.write(
+                        f"[ERROR] {fpath.name} frame={row['frame_index']} "
+                        f"shape mismatch: obs={obs.shape}, act={act.shape}"
+                    )
+                    error_frames += 1
+                    continue
 
             obs_pos = obs[pos_indices]
             act_pos = act[pos_indices]
@@ -171,10 +176,10 @@ def check_action_observation_consistency_func(
     print("\n========== Summary ==========")
     print(f"Total parquet files checked : {len(parquet_files)}")
     print(f"Total frames checked        : {total_frames}")
-    print(f"Frames with violations     : {error_frames}")
-    print(f"FPS                        : {fps}")
-    print(f"Position threshold         : {position_threshold}")
-    print(f"Exclude neck joints        : {exclude_neck}")
+    print(f"Frames with violations      : {error_frames}")
+    print(f"FPS                         : {fps}")
+    print(f"Position threshold          : {position_threshold}")
+    print(f"Exclude neck joints         : {exclude_neck}")
 
     return error_frames == 0
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pad each episode by duplicating its last frame N times, then recompute episodes_stats.jsonl (LeRobot v2.1 compatible).
+Pad each episode by duplicating its last frame N times, then recompute episodes_stats.jsonl.
 
 Operations:
 - Parquet: duplicate last row N times, update indices and timestamps
@@ -184,7 +184,11 @@ def main() -> None:
                     if video_path.exists():
                         pad_video_tpad(video_path, n, fps)
                     else:
-                        print(f"Missing video: {video_path}")
+                        video_path = cam / f"episode_{ep_idx:06d}.avi"
+                        if video_path.exists():
+                            pad_video_tpad(video_path, n, fps)
+                        else:
+                            print(f"Missing video: {video_path}")
 
     info["total_frames"] = total_frames
     save_json(info, info_path)

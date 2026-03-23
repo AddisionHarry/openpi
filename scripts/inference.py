@@ -106,8 +106,12 @@ def unparse_observation(message: Dict, device: str) -> Dict:
     # neck_joints_vel = np.array(message['head_joint_velocities']).reshape(-1)
     # waist_joints_vel = np.array(message['chest_joint_velocities']).reshape(-1)
     # eef
-    left_tcp_pose_in_chest = np.array(message['left_tcp_pose_in_chest']).reshape(-1)
-    right_tcp_pose_in_chest = np.array(message['right_tcp_pose_in_chest']).reshape(-1)
+    if NEW_VERSION_INFERENCE:
+        left_tcp_pose_in_chest = np.array(message['left_tcp_pose']).reshape(-1)
+        right_tcp_pose_in_chest = np.array(message['right_tcp_pose']).reshape(-1)
+    else:
+        left_tcp_pose_in_chest = np.array(message['left_tcp_pose_in_chest']).reshape(-1)
+        right_tcp_pose_in_chest = np.array(message['right_tcp_pose_in_chest']).reshape(-1)
     # forces
     # left_hand_force = np.array(message['left_hand_force']).reshape(-1)
     # right_hand_force = np.array(message['right_hand_force']).reshape(-1)

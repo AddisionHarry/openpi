@@ -1,0 +1,81 @@
+name: pi0_industrial_sorting_joint_20260112
+# Project name.
+project_name: industrial_sorting
+
+assets_base_dir: /root/workspace/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260112
+
+# Here you define the model config -- In this example we use pi0 as the model
+# architecture and perform *full* finetuning. in the examples below we show how to modify
+# this to perform *low-memory* (LORA) finetuning and use pi0-FAST as an alternative architecture.
+model:
+  dtype: bfloat16
+  paligemma_variant: gemma_2b
+  action_expert_variant: gemma_300m
+
+  action_dim: 32
+  action_horizon: 50
+  max_token_len: null
+
+  pi05: false
+
+  discrete_state_input: null
+
+# Here you define the dataset you are training on. In this example we use the Libero
+# dataset. For your own dataset, you can change the repo_id to point to your dataset.
+# Also modify the DataConfig to use the new config you made for your dataset above.
+data:
+  repo_id: zj-humanoid/pi0_industrial_sorting_joint_20260112
+  assets:
+    assets_dir: /root/workspace/openpi/assets/pi0_zjhumanoid_industrial_sorting/zj-humanoid/industrial_sorting_cleaned_20260112
+    asset_id: pi0_industrial_sorting_joint_20260112
+  base_config:
+    prompt_from_task: true
+
+  extra_delta_transform: false
+  force_offline_dataset: true
+
+  use_arms: [false, true]
+  obs_use_waist_angles: true
+  action_use_waist_angles: true
+  use_wrist_cameras: [false, true]
+
+  use_tcp_pose: false
+  tcp_pose_in_wrist: false
+
+  flip_wrist_images: false
+
+  use_hand_align_state: false
+  hand_align_state_chest_image_mask_prob: 0.0
+  hand_align_state_idx: 0
+
+# Here you define which pre-trained checkpoint you want to load to initialize the model.
+# This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
+weight_loader:
+  params_path: gs://openpi-assets/checkpoints/pi0_base/params
+lr_schedule:
+  warmup_steps: 1500
+  peak_lr: 1.0e-05
+  decay_steps: 25000
+  decay_lr: 1.0e-06
+
+# Optional path to a PyTorch checkpoint to load weights from.
+pytorch_weight_path: null
+# Precision for PyTorch training.
+pytorch_training_precision: bfloat16
+
+# Below you can define other hyperparameters like the learning rate, number of training steps, etc.
+# Check the base TrainConfig class for a full list of available hyperparameters.
+num_train_steps: 40000
+log_interval: 50
+save_interval: 1000
+keep_period: 20000
+batch_size: 64
+num_workers: 8
+ema_decay: 0.99
+
+seed: 42
+
+wandb_enabled: true
+
+force_offline_dataset: true
+val_fraction: 0.0

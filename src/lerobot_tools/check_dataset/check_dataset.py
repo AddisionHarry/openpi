@@ -20,61 +20,61 @@ CHECKS = [
     (
         "Check Task Index",
         check_list.check_task_index_consistency_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta")), fix)
+        lambda dataset_dir, fix, allow_depth: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta")), fix)
     ),
     (
         "Compute Episode Stats",
         check_list.check_compute_episodes_stats_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta")), False)
+        lambda dataset_dir, fix, allow_depth: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta")), False)
     ),
     (
         "Delete Depth Info",
         check_list.check_delete_depth_info_func,
-        lambda dataset_dir, fix: (os.path.join(dataset_dir, "meta", "info.json"), fix)
+        lambda dataset_dir, fix, allow_depth: (os.path.join(dataset_dir, "meta", "info.json"), fix, allow_depth)
     ),
     (
         "Delete Depth min/max json statistics",
         check_list.check_delete_depth_jsondata_func,
-        lambda dataset_dir, fix: (os.path.join(dataset_dir, "meta", "episodes_stats.jsonl"), fix)
+        lambda dataset_dir, fix, allow_depth: (os.path.join(dataset_dir, "meta", "episodes_stats.jsonl"), fix, allow_depth)
     ),
     (
         "Check Parquet Action Name",
         check_list.check_parquet_action_name_actions_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta", "info.json")), fix)
+        lambda dataset_dir, fix, allow_depth: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta", "info.json")), fix)
     ),
     (
         "Check Parquet Index Global Continuity",
         check_list.check_parquet_global_index_continuity_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), fix)
+        lambda dataset_dir, fix, allow_depth: (str(os.path.join(dataset_dir, "data")), fix)
     ),
     (
         "Check Parquet Episode Length",
         check_list.check_episode_length_func,
-        lambda dataset_dir, fix: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta", "episodes.jsonl")), fix)
+        lambda dataset_dir, fix, allow_depth: (str(os.path.join(dataset_dir, "data")), str(os.path.join(dataset_dir, "meta", "episodes.jsonl")), fix)
     ),
     (
         "Check Info Consistency",
         check_list.check_dataset_info_consistency_func,
-        lambda dataset_dir, fix: (str(dataset_dir), fix)
+        lambda dataset_dir, fix, allow_depth: (str(dataset_dir), fix)
     ),
     (
         "Check Action-Observation Consistency",
         check_list.check_action_observation_consistency_func,
-        lambda dataset_dir, fix: (str(dataset_dir), 15.0, True)
+        lambda dataset_dir, fix, allow_depth: (str(dataset_dir), 15.0, True)
     ),
     (
         "Check Parquet Episode Index",
         check_list.check_parquet_episode_index_func,
-        lambda dataset_dir, fix: (dataset_dir, fix)
+        lambda dataset_dir, fix, allow_depth: (dataset_dir, fix)
     ),
     (
         "Check Video Frames",
         check_list.check_lerobot_video_frames_func,
-        lambda dataset_dir, fix: (dataset_dir, 1)
+        lambda dataset_dir, fix, allow_depth: (dataset_dir, 1)
     ),
 ]
 
-def main(dataset_dir: str, fix: bool = False):
+def main(dataset_dir: str, fix: bool = False, allow_depth: bool = False):
     if not os.path.exists(dataset_dir):
         print(f"Error: dataset directory does not exist: {dataset_dir}")
         return
@@ -84,7 +84,7 @@ def main(dataset_dir: str, fix: bool = False):
     for i, (check_name, check_func, arg_func) in enumerate(CHECKS):
         tqdm.write(f"\n[{i+1}/{len(CHECKS)}] ================== Running {check_name} ==================\n")
         try:
-            args = arg_func(dataset_dir, fix)
+            args = arg_func(dataset_dir, fix, allow_depth)
             passed = check_func(*args)
             results[check_name] = passed
         except Exception as e:
@@ -95,7 +95,7 @@ def main(dataset_dir: str, fix: bool = False):
     for idx, (name, passed) in enumerate(results.items(), 1):
         status = "PASSED " if passed else "FAILED "
         tqdm.write(f"{idx:2d}. {name:38s} : {status}")
-    tqdm.write("==================================================\n")
+    tqdm.write("===================================================\n")
 
 
 if __name__ == "__main__":
@@ -109,7 +109,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Top-level dataset checker for LeRobot")
     parser.add_argument("--dataset-dir", required=True, help="Root path of dataset to check")
+    parser.add_argument("--allow-depth", action="store_true", help="Allow depth information in the dataset")
     parser.add_argument("--fix", action="store_true", help="Apply fixes in-place. Default is dry-run.")
     args = parser.parse_args()
 
-    main(args.dataset_dir, args.fix)
+    main(args.dataset_dir, args.fix, args.allow_depth)

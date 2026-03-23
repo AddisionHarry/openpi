@@ -88,7 +88,7 @@ def check_episode_video_mismatch(dataset_root: str, frame_diff_threshold: int = 
 
     camera_views = [
         "observation.images.chest_rgb",
-        "observation.images.head_rgb",
+        # "observation.images.head_rgb",
         "observation.images.left_wrist_rgb",
         "observation.images.right_wrist_rgb"
     ]

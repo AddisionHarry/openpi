@@ -7,3 +7,6 @@
 [submodule "src/naviai_inference"]
 	path = src/naviai_inference
 	url = https://github.com/AddisionHarry/NAVIAI-ModelInference.git
+[submodule "lerobot_tools"]
+	path = src/lerobot_tools
+	url = git@github.com:AddisionHarry/Lerobot_Dataset_Tools.git

@@ -3,11 +3,11 @@
 Compare Torch vs JAX Diffusion Policy on the same frame with identical noise.
 Generate PyTorch model use:
   uv run examples/convert_jax_model_to_pytorch.py \
-    --checkpoint_dir /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999 \
+    --checkpoint_dir /root/workspace/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999 \
     --config_name pi05_industrial_sorting_joint_20260126 \
-    --output_path /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999_torch
-  cp -rf /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999/assets \
-      /root/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999_torch
+    --output_path /root/workspace/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999_torch
+  cp -rf /root/workspace/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999/assets \
+      /root/workspace/openpi/checkpoints/pi05_industrial_sorting_joint_20260126/pi05_industrial_sorting_20260128/39999_torch
 """
 import argparse
 from pathlib import Path

@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-check_delete_depth_info.py
+Unified cleaner for:
+  - episodes_stats.jsonl (JSON Lines)
 
-Script to check and optionally remove fields containing both "observation" and "depth" in info.json file.
-
-Command-line usage:
-    python check_delete_depth_info.py </path/to/info.json> [--fix]
-
-External interface usage:
-    from check_delete_depth_info import check_delete_depth_info
-    success = check_delete_depth_info_func("/path/to/info.json", fix=False)
+Capabilities:
+  Detect and remove keys where name contains both "observation" and "depth"
+  Auto-detect JSON / JSONL
+  Safe in-place fix (--fix)
 """
 
 import os
 import json
+
 
 def find_bad_keys(obj, path=""):
     """Return list of (full_key_path, value) where key contains both 'observation' and 'depth'."""
@@ -29,8 +27,9 @@ def find_bad_keys(obj, path=""):
             bad += find_bad_keys(v, path + f"[{i}]")
     return bad
 
+
 def remove_bad_keys(obj):
-    """Recursively remove keys containing both 'observation' & 'depth'."""
+    """Recursively remove keys containing both 'observation' and 'depth'."""
     if isinstance(obj, dict):
         new = {}
         for k, v in obj.items():
@@ -42,45 +41,31 @@ def remove_bad_keys(obj):
         return [remove_bad_keys(v) for v in obj]
     return obj
 
-def show_context(lines, target_line, window=3):
-    """Print lines around a target line."""
-    start = max(0, target_line - window - 1)
-    end = min(len(lines), target_line + window)
-    ctx = lines[start:end]
-    print("\n---- Context ----")
-    for idx, l in enumerate(ctx, start=start + 1):
-        mark = ">>" if idx == target_line else "  "
-        print(f"{mark} {idx}: {l.rstrip()}")
-    print("-----------------\n")
 
-def check_delete_depth_info_func(input_path, fix=False):
+def check_delete_depth_jsondata_func(input_path, fix=False, allow_depth=False):
     """
     Check and optionally remove fields containing 'observation' and 'depth'.
+    Supports both JSON and JSONL transparently.
 
-    Parameters
-    ----------
-    input_path : str
-        Path to JSON or JSONL file to check.
-    fix : bool
-        If True, remove illegal fields in-place.
+    Returns True if:
+      - No illegal keys found, OR
+      - Illegal keys found and removed (fix=True)
 
-    Returns
-    -------
-    bool
-        True if file has no illegal keys or illegal keys were successfully removed,
-        False if illegal keys were found but fix=False.
+    Returns False if illegal fields found while fix=False.
     """
+    if allow_depth:
+        print("Depth fields are allowed. No checks performed.")
+        return True
     print(f"Checking: {input_path}")
 
     if not os.path.exists(input_path):
-        print(f"Error: File not found - {input_path}")
+        print(f"ERROR: File not found: {input_path}")
         return False
 
-    # Read raw lines for context printing
+    # Load raw lines for context
     with open(input_path, "r", encoding="utf-8") as f:
         raw_lines = f.readlines()
 
-    # Try JSON / JSONL
     try:
         data = json.loads("".join(raw_lines))
         is_list = False
@@ -90,26 +75,27 @@ def check_delete_depth_info_func(input_path, fix=False):
 
     had_issue = False
 
+    # JSONL -> enumerate lines
     if is_list:
-        iterable = enumerate(data)
+        items = enumerate(data, start=1)
     else:
-        iterable = [(1, data)]
+        items = [(1, data)]
 
-    for idx, item in iterable:
-        bad = find_bad_keys(item)
-        if not bad:
+    for entry_line, item in items:
+        bad_keys = find_bad_keys(item)
+        if not bad_keys:
             continue
 
         had_issue = True
-        print(f"\nFound illegal keys in entry at line {idx}:")
-        for key_path, _ in bad:
+        print(f"\nFound illegal keys in entry at line {entry_line}:")
+        for key_path, _ in bad_keys:
             print(f"  - {key_path}")
 
-        for key_path, _ in bad:
+        # show context for each offending key
+        for key_path, _ in bad_keys:
             key = key_path.split("/")[-1].strip()
-            for lineno, line in enumerate(raw_lines, start=1):
+            for ln, line in enumerate(raw_lines, start=1):
                 if f'"{key}"' in line.replace(" ", ""):
-                    show_context(raw_lines, lineno)
                     break
 
     if not had_issue:
@@ -120,28 +106,28 @@ def check_delete_depth_info_func(input_path, fix=False):
         print("Detected illegal fields. Use --fix to remove them.")
         return False
 
-    # Perform deletion
-    print(" Removing keys (in-place)...")
+    print("Removing illegal depth-observation keys...")
     cleaned = remove_bad_keys(data)
 
     with open(input_path, "w", encoding="utf-8") as f:
-        if is_list:
+        if is_list:  # JSONL
             for obj in cleaned:
                 json.dump(obj, f, ensure_ascii=False)
                 f.write("\n")
-        else:
+        else:  # normal JSON
             json.dump(cleaned, f, ensure_ascii=False, indent=2)
 
-    print("Finished cleaning file (in-place modified).")
+    print("Finished cleaning. File updated in-place.")
     return True
+
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(
-        description='Check and optionally remove "observation"+"depth" fields from JSON/JSONL'
+        description='Check and optionally remove "observation"+"depth" keys from JSON/JSONL files.'
     )
-    parser.add_argument("input_path", help="JSON or JSONL file to check")
-    parser.add_argument("--fix", action="store_true", help="Delete illegal keys in-place")
+    parser.add_argument("input_path", help="JSON / JSONL file path")
+    parser.add_argument("--fix", action="store_true", help="Fix illegal keys")
 
     args = parser.parse_args()
-    check_delete_depth_info_func(args.input_path, fix=args.fix)
+    check_delete_depth_jsondata_func(args.input_path, fix=args.fix)

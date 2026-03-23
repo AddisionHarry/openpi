@@ -11,10 +11,9 @@ This script:
 - Backs up original data and video directories
 
 Usage:
-    python remove_episodes.py --dataset-root <path> --remove-indices "[1,2,3]"
+    python remove_episodes.py --dataset-root <path> --remove-indices 1,2,3
 """
 
-import ast
 import argparse
 import json
 import shutil
@@ -25,13 +24,20 @@ import pandas as pd
 
 def parse_args():
     def parse_int_list(value: str):
+        # remove brackets if user accidentally adds them
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            value = value[1:-1]
+
+        # split by comma
+        parts = [v.strip() for v in value.split(",") if v.strip()]
+
         try:
-            parsed = ast.literal_eval(value)
-        except Exception as e:
-            raise argparse.ArgumentTypeError(f"Invalid list format: {value}") from e
-        if not isinstance(parsed, list) or not all(isinstance(x, int) for x in parsed):
-            raise argparse.ArgumentTypeError("remove-indices must be a list of integers, e.g. [1, 2, 3]")
-        return parsed
+            return [int(v) for v in parts]
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "remove-indices must be integers separated by commas, e.g. 1,2,3"
+            )
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root", required=True)
@@ -39,7 +45,7 @@ def parse_args():
         "--remove-indices",
         type=parse_int_list,
         required=True,
-        help='Python-style list, e.g. "[4, 5, 14]"'
+        help="Comma-separated integers, e.g. 4,5,14"
     )
     return parser.parse_args()
 
